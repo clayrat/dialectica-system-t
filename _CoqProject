@@ -1,0 +1,8 @@
+-Q nbe-system-t/theories NbE
+-Q theories SystemT
+
+theories/Terms.v
+theories/Eval.v
+theories/HA.v
+theories/Dialectica.v
+theories/Realizer.v
