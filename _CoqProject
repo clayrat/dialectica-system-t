@@ -3,6 +3,7 @@
 
 theories/Terms.v
 theories/Eval.v
+theories/Semantics.v
 theories/HA.v
 theories/Dialectica.v
 theories/Realizer.v

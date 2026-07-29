@@ -40,7 +40,7 @@
 From Stdlib Require Import List.
 Import ListNotations.
 From NbE Require Import Syntax OPE Subst.
-From SystemT Require Import Terms Eval HA.
+From SystemT Require Import Terms Eval Semantics HA.
 
 Open Scope ty_scope.
 Open Scope tm_scope.
@@ -349,14 +349,32 @@ Fixpoint wit {Γ} {P : prp Γ} (d : proof Γ P) : tm Γ (W P) :=
 (** ** Validity
 
     The Dialectica matrix, denotationally (via Eval.v), and the interpretation
-    proper: [A] is valid when some System T witness [t] beats every counter. *)
+    proper: [A] is valid when some System T witness [t] beats every counter.
+
+    Quantification is over the PER *domain* — self-related environments and
+    counters — not over arbitrary values.  Under the axiom-free PER
+    discipline (Semantics.v) this restriction is forced: the commutation
+    lemmas soundness relies on only speak about values in the domain, and an
+    unrestricted statement would be false — e.g. it would make every
+    [F : (nat -> nat) -> nat] respect pointwise equality of its argument,
+    which is exactly the extensionality we do not assume.  ([diaT] itself
+    substitutes internally at quantifiers, so even reaching the boolean
+    observation passes through higher-order values first.)
+
+    The restriction is cheap where it matters:
+    - closed formulas ([Γ = []]): the environment premise is trivial;
+    - pure HA contexts (all [tN]): environments are tuples of numbers,
+      self-related for free;
+    - the witness side needs no premise: [tmden t ρ] is self-related by the
+      fundamental lemma (D2 step 2) whenever [ρ] is. *)
 
 Definition dia {Γ} (A : prp Γ) (ρ : cxtden Γ)
   (w : tyden (W A)) (c : tyden (C A)) : bool :=
   tmden (diaT A) ρ w c.
 
 Definition valid {Γ} (A : prp Γ) (t : tm Γ (W A)) : Prop :=
-  forall ρ c, dia A ρ (tmden t ρ) c = true.
+  forall ρ c, EEqE Γ ρ ρ -> EEq (C A) c c ->
+    dia A ρ (tmden t ρ) c = true.
 
 (** Soundness — the statement this translation is aiming at:
 
@@ -394,12 +412,12 @@ Proof. reflexivity. Qed.
     soundness theorem, checked by computation. *)
 
 Example ex_two_valid : valid _ (wit ex_two).
-Proof. intros ρ c; destruct ρ, c; reflexivity. Qed.
+Proof. intros ρ c _ _; destruct ρ, c; reflexivity. Qed.
 
 Example ex_succ_valid : valid _ (wit ex_succ).
 Proof.
-  intros ρ c; destruct ρ; destruct c as [n u]; destruct u.
-  exact (teqb_refl (S n)).
+  intros ρ c _ _; destruct ρ; destruct c as [n u]; destruct u.
+  exact (teqb_refl (Γ := []) tt (S n)).
 Qed.
 
 (** The induction realizer computes.  Take [Q := iszero x]; feed the backward

@@ -9,7 +9,20 @@
 
     Totality of evaluation is inherited from the meta-language: [trec] maps to
     [nat_rect], so running extracted programs needs no normalization theorem
-    for T itself. *)
+    for T itself.
+
+    This is not a weak call-by-name normalizer.  The [tlam] clause has a
+    weak/CBN-looking shape — it returns a meta-level function and suspends the
+    body until that function is applied — but the actual reduction strategy is
+    whichever evaluator Rocq is asked to use ([cbn], [cbv], [vm_compute], ...).
+    Moreover, [tmden] erases syntax: closed ground terms become Rocq values,
+    functions become Rocq functions, and open terms require an environment.
+    There are no neutral terms and no reification back to [tm].
+
+    Thus [tmden] is best viewed as the evaluation half of an NbE-like setup,
+    into the standard set-theoretic model, without reflection or reification.
+    The [norm] function in the [nbe-system-t] submodule is the actual strong
+    beta-eta normalizer producing System T normal forms. *)
 
 From Stdlib Require Import List.
 Import ListNotations.
@@ -63,6 +76,6 @@ Fixpoint tmden {Γ T} (t : tm Γ T) : cxtden Γ -> tyden T :=
   | tsnd p => fun ρ => snd (tmden p ρ)
   end.
 
-(** The equality program [teqb] means what it should on the diagonal. *)
-Lemma teqb_refl : forall n, tmden (@teqb []) tt n n = true.
-Proof. induction n as [|n IH]; [reflexivity | exact IH]. Qed.
+(** Facts about the evaluator (commutation with renaming/substitution, the
+    PER it respects, properties of [teqb], ...) live in Semantics.v — this
+    file stays definitions-only, mirroring the upstream Model.v. *)
