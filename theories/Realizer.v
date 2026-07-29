@@ -32,8 +32,9 @@
     which needs "[tmden] respects [defeq]", stated observationally (per-type
     logical relation) so that the η-rules do not demand functional
     extensionality.  It will reuse the substitution fusion lemmas of
-    NbE.Subst.  Once D2 (soundness of [wit]) exists, the two together give:
-    every HA theorem has a *normal-form* realizer winning its Dialectica game. *)
+    NbE.Subst.  Together with D2's soundness theorem for [wit], that transfer
+    will show that every HA theorem has a *normal-form* realizer winning its
+    Dialectica game. *)
 
 From Stdlib Require Import List.
 Import ListNotations.

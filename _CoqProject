@@ -6,4 +6,5 @@ theories/Eval.v
 theories/Semantics.v
 theories/HA.v
 theories/Dialectica.v
+theories/Validity.v
 theories/Realizer.v

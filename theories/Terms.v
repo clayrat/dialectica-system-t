@@ -12,7 +12,7 @@
 
     We build on: OPEs with [tm_ren] for renaming/weakening, and parallel
     substitution [sub Δ Γ] / [subst] — together with its already-proved fusion
-    lemma library, which the soundness milestone (D2) will consume.  Note the
+    lemma library consumed by the soundness proof (D2).  Note the
     NbE convention [sub Δ Γ = forall T, var Γ T -> tm Δ T] (target first). *)
 
 From Stdlib Require Import List.
@@ -44,10 +44,11 @@ Definition vcase {Γ S T} (x : var (S :: Γ) T) :
     search). *)
 Definition wk1 {Γ S T} (t : tm Γ T) : tm (S :: Γ) T := tm_ren wk t.
 
-Definition wkn2 {Γ S1 S2} : ope (S1 :: S2 :: Γ) Γ := ope_comp wk wk.
+Definition wkn2 {Γ S1 S2} : ope (S1 :: S2 :: Γ) Γ :=
+  ope_drop (ope_drop ope_id).
 
 Definition wkn5 {Γ S1 S2 S3 S4 S5} : ope (S1 :: S2 :: S3 :: S4 :: S5 :: Γ) Γ :=
-  ope_comp wk (ope_comp wk (ope_comp wk wkn2)).
+  ope_drop (ope_drop (ope_drop wkn2)).
 
 (** Substituting for the head variable only (the substitution object behind
     [subst1]; first-class so it can be pushed through formulas). *)
@@ -59,6 +60,12 @@ Definition sub1 {Γ S} (s : tm Γ S) : sub Γ (S :: Γ) :=
     [tN :: Γ] deep inside some larger context [Δ]. *)
 Definition sub_at0 {Δ Γ} (o : ope Δ Γ) (n : tm Δ tN) : sub Δ (tN :: Γ) :=
   fun T x => vcase x (tm Δ) n (fun T' y => tvar (var_ren o y)).
+
+(** The successor substitution [x ↦ S x] on the head [tN] variable (used by
+    HA to state induction). *)
+Definition sub_succ {Γ} : sub (tN :: Γ) (tN :: Γ) :=
+  fun T x =>
+    vcase x (tm (tN :: Γ)) (tsuc (tvar vz)) (fun T' y => tvar (vs y)).
 
 (** Transporting a term along an equality of types (the equalities come from
     the W/C-invariance lemmas in Dialectica.v; kept generic here). *)

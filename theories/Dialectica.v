@@ -32,10 +32,9 @@
       Goedel's counterexample *search* (backward), both single [trec]s.
 
     - The matrix is also given denotationally ([dia] below, via the evaluator
-      of Eval.v), yielding the statement of soundness:
-      [forall d : proof Γ A, valid A (wit d)].  Proving it needs the usual
-      substitution-vs-evaluation lemmas and is left as the next milestone;
-      this file is only the *translation*. *)
+      of Eval.v), yielding the validity notion; the soundness theorem
+      [forall d : proof Γ A, valid A (wit d)] is proved in Validity.v
+      ([soundness]), axiom-free.  This file is the *translation*. *)
 
 From Stdlib Require Import List.
 Import ListNotations.
@@ -165,185 +164,229 @@ Fixpoint diaT {Γ} (A : prp Γ) : tm Γ (W A ⇒ C A ⇒ tBool) :=
                     · tsnd v1 · v0))
   end.
 
+(** ** The realizer combinators
+
+    One named System T program per proof rule (they are the de Bruijn
+    renderings of the programs in Bauer's [Theorem]s, adapted to product
+    counters for [∧]).  A witness of an implication is a *pair*: the forward
+    map on witnesses and the backward map on counters.  Rules with premises
+    take the premise realizers as term arguments.
+
+    [wit] below dispatches to these, so a validity lemma about [r_foo]
+    applies to [wit (ax_foo ...)] definitionally — the shape step 6 needs
+    (the combinator-plus-lemma organization of theories_old/linear.v).
+
+    Free number variables of the formulas are just term variables of type
+    [tN] in [Γ], so no closure/abstraction is needed: combinators mentioning
+    arbitrary numeric terms [t] simply embed (weakenings of) [t]. *)
+
+(* λw. u.1 w — modus ponens is application of the forward map. *)
+Definition r_mp {Γ} {P Q : prp Γ}
+  (u : tm Γ (W (P ⊃ Q))) (a : tm Γ (W P)) : tm Γ (W Q) :=
+  tfst u · a.
+
+(* λw. v.1 (u.1 w) , λw c. u.2 w (v.2 (u.1 w) c) *)
+Definition r_chain {Γ} {P Q R : prp Γ}
+  (u : tm Γ (W (P ⊃ Q))) (v : tm Γ (W (Q ⊃ R))) : tm Γ (W (P ⊃ R)) :=
+  tpair (tlam (tfst (wk1 v) · (tfst (wk1 u) · v0)))
+        (tlam (tlam (tsnd (wk1 (wk1 u)) · v1 ·
+                       (tsnd (wk1 (wk1 v)) · (tfst (wk1 (wk1 u)) · v1) · v0)))).
+
+(* λw. if w.1 then w.2.1 else w.2.2 , λw c. (c, c) *)
+Definition r_or_contr {Γ} {P : prp Γ} : tm Γ (W (P ∨ P ⊃ P)) :=
+  tpair (tlam (tif (tfst v0) (tfst (tsnd v0)) (tsnd (tsnd v0))))
+        (tlam (tlam (tpair v0 v0))).
+
+(* λw. (w, w) , λw c. if |P|(w, c.1) then c.2 else c.1
+   — the contraction that needs the internal decision [diaT]. *)
+Definition r_and_contr {Γ} {P : prp Γ} : tm Γ (W (P ⊃ P ∧ P)) :=
+  tpair (tlam (tpair v0 v0))
+        (tlam (tlam (tif (wk1 (wk1 (diaT P)) · v1 · tfst v0)
+                         (tsnd v0) (tfst v0)))).
+
+(* λw. (true, (w, dummy)) , λw c. c.1 *)
+Definition r_or_inl {Γ} {P Q : prp Γ} : tm Γ (W (P ⊃ P ∨ Q)) :=
+  tpair (tlam (tpair ttrue (tpair v0 (tdefault (W Q)))))
+        (tlam (tlam (tfst v0))).
+
+(* λw. w.1 , λw c. (c, dummy) *)
+Definition r_and_eliml {Γ} {P Q : prp Γ} : tm Γ (W (P ∧ Q ⊃ P)) :=
+  tpair (tlam (tfst v0))
+        (tlam (tlam (tpair v0 (tdefault (C Q))))).
+
+(* λw. (¬w.1, (w.2.2, w.2.1)) , λw c. (c.2, c.1) *)
+Definition r_or_comm {Γ} {P Q : prp Γ} : tm Γ (W (P ∨ Q ⊃ Q ∨ P)) :=
+  tpair (tlam (tpair (tnegb (tfst v0))
+                     (tpair (tsnd (tsnd v0)) (tfst (tsnd v0)))))
+        (tlam (tlam (tpair (tsnd v0) (tfst v0)))).
+
+Definition r_and_comm {Γ} {P Q : prp Γ} : tm Γ (W (P ∧ Q ⊃ Q ∧ P)) :=
+  tpair (tlam (tpair (tsnd v0) (tfst v0)))
+        (tlam (tlam (tpair (tsnd v0) (tfst v0)))).
+
+(* λw. (w.1, (w.2.1, u.1 w.2.2)) , λw c. (c.1, u.2 w.2.2 c.2) *)
+Definition r_or_distr {Γ} {P Q R : prp Γ}
+  (u : tm Γ (W (P ⊃ Q))) : tm Γ (W (R ∨ P ⊃ R ∨ Q)) :=
+  tpair (tlam (tpair (tfst v0)
+                     (tpair (tfst (tsnd v0)) (tfst (wk1 u) · tsnd (tsnd v0)))))
+        (tlam (tlam (tpair (tfst v0)
+                           (tsnd (wk1 (wk1 u)) · tsnd (tsnd v1) · tsnd v0))))
+.
+
+(* λp. ( λq. u.1 (p,q) , λq c. (u.2 (p,q) c).2 ) , λp qc. (u.2 (p, qc.1) qc.2).1 *)
+Definition r_cur {Γ} {P Q R : prp Γ}
+  (u : tm Γ (W (P ∧ Q ⊃ R))) : tm Γ (W (P ⊃ (Q ⊃ R))) :=
+  tpair (tlam (tpair
+           (tlam (tfst (wk1 (wk1 u)) · tpair v1 v0))
+           (tlam (tlam (tsnd (tsnd (wk1 (wk1 (wk1 u))) · tpair v2 v1 · v0))))))
+        (tlam (tlam (tfst (tsnd (wk1 (wk1 u)) · tpair v1 (tfst v0) · tsnd v0)))).
+
+(* λw. (u.1 w.1).1 w.2 ,
+   λw c. ( u.2 w.1 (w.2, c) , (u.1 w.1).2 w.2 c ) *)
+Definition r_uncur {Γ} {P Q R : prp Γ}
+  (u : tm Γ (W (P ⊃ (Q ⊃ R)))) : tm Γ (W (P ∧ Q ⊃ R)) :=
+  tpair (tlam (tfst (tfst (wk1 u) · tfst v0) · tsnd v0))
+        (tlam (tlam (tpair
+           (tsnd (wk1 (wk1 u)) · tfst v1 · tpair (tsnd v1) v0)
+           (tsnd (tfst (wk1 (wk1 u)) · tfst v1) · tsnd v1 · v0)))).
+
+Definition r_exfalso {Γ} {P : prp Γ} : tm Γ (W (pFalse ⊃ P)) :=
+  tpair (tlam (tdefault (W P)))
+        (tlam (tlam tunit)).
+
+(* u : tm (tN :: Γ) (W (pwk P ⊃ Q));  the extra variable is the ∀-bound one.
+   f = λw n. (u[x:=n]).1 w   g = λw (n,c). (u[x:=n]).2 w c *)
+Definition r_all_intro {Γ} {P : prp Γ} {Q : prp (tN :: Γ)}
+  (u : tm (tN :: Γ) (W (pwk P ⊃ Q))) : tm Γ (W (P ⊃ pAll Q)) :=
+  let eW := W_ren wk P in
+  let eC := C_ren wk P in
+  tpair (tlam (tlam
+           (tfst (subst (sub_at0 wkn2 v0) u)
+              · tcast (eq_sym eW) v1)))
+        (tlam (tlam (tcast eC
+           (tsnd (subst (sub_at0 wkn2 (tfst v0)) u)
+              · tcast (eq_sym eW) v1 · tsnd v0)))).
+
+(* f = λw. w t   g = λw c. (t, c) *)
+Definition r_all_elim {Γ} {Q : prp (tN :: Γ)} (t : tm Γ tN) :
+  tm Γ (W (pAll Q ⊃ psub1 Q t)) :=
+  let eW := W_sub (sub1 t) Q in
+  let eC := C_sub (sub1 t) Q in
+  tpair (tlam (tcast (eq_sym eW) (v0 · wk1 t)))
+        (tlam (tlam (tpair (wk1 (wk1 t)) (tcast eC v0)))).
+
+(* f = λw. (t, w)   g = λw c. c *)
+Definition r_ex_intro {Γ} {Q : prp (tN :: Γ)} (t : tm Γ tN) :
+  tm Γ (W (psub1 Q t ⊃ pEx Q)) :=
+  let eW := W_sub (sub1 t) Q in
+  let eC := C_sub (sub1 t) Q in
+  tpair (tlam (tpair (wk1 t) (tcast eW v0)))
+        (tlam (tlam (tcast (eq_sym eC) v0))).
+
+(* u : tm (tN :: Γ) (W (Q ⊃ pwk P)).
+   f = λ(n,w). (u[x:=n]).1 w   g = λ(n,w) c. (u[x:=n]).2 w c *)
+Definition r_ex_elim {Γ} {P : prp Γ} {Q : prp (tN :: Γ)}
+  (u : tm (tN :: Γ) (W (Q ⊃ pwk P))) : tm Γ (W (pEx Q ⊃ P)) :=
+  let eW := W_ren wk P in
+  let eC := C_ren wk P in
+  tpair (tlam (tcast eW
+           (tfst (subst (sub_at0 wk (tfst v0)) u) · tsnd v0)))
+        (tlam (tlam
+           (tsnd (subst (sub_at0 wkn2 (tfst v1)) u)
+              · tsnd v1 · tcast (eq_sym eC) v0))).
+
+(* All atoms have trivial witnesses, so Leibniz is transport:
+   λ_. ( λw. w , λw c. c ) , λ_ c. tt *)
+Definition r_leibniz {Γ} {Q : prp (tN :: Γ)} (t s : tm Γ tN) :
+  tm Γ (W (pEq t s ⊃ (psub1 Q t ⊃ psub1 Q s))) :=
+  let eWt := W_sub (sub1 t) Q in
+  let eWs := W_sub (sub1 s) Q in
+  let eCt := C_sub (sub1 t) Q in
+  let eCs := C_sub (sub1 s) Q in
+  tpair (tlam (tpair
+           (tlam (tcast (eq_trans eWt (eq_sym eWs)) v0))
+           (tlam (tlam (tcast (eq_trans eCs (eq_sym eCt)) v0)))))
+        (tlam (tlam tunit)).
+
+(* An implication between atoms has purely administrative realizers (all
+   moves are units) — covers the successor axioms. *)
+Definition r_atom_imp {Γ} {b b' : tm Γ tBool} :
+  tm Γ (W (pAtom b ⊃ pAtom b')) :=
+  tpair (tlam tunit) (tlam (tlam tunit)).
+
+(* Induction.  Write the premise p = (z, s) with
+     z : W Q[0]                                    (base witness)
+     s : N ⇒ (W Q ⇒ W Q[S x]) × (W Q ⇒ C Q[S x] ⇒ C Q)   (step witness)
+   Forward: λp n. rec z (λk r. (p.2 k).1 r) n — primitive recursion.
+   Backward: given a counter (n, c) against [∀x.Q], search downward from n
+   for a failing step (Goedel's / Bauer's [search]): recursion computes the
+   pair (w_k, g_k) where w_k realizes Q[k] and
+     g_0     c = (c, dummy)
+     g_(k+1) c = let c' = (p.2 k).2 w_k c in
+                 if |Q[k]|(w_k, c') then (dummy, (k, (w_k, c))) else g_k c'
+   returning a counter against the premise conjunction. *)
+Definition r_ind {Γ} {Q : prp (tN :: Γ)} :
+  tm Γ (W ((psub1 Q tzero ∧ pAll (Q ⊃ psucc Q)) ⊃ pAll Q)) :=
+  let eW0 := W_sub (sub1 tzero) Q in
+  let eC0 := C_sub (sub1 tzero) Q in
+  let eWS := W_sub sub_succ Q in
+  let eCS := C_sub sub_succ Q in
+  tpair
+    (tlam (tlam (trec (tcast eW0 (tfst v1))
+                      (tlam (tlam (tcast eWS (tfst (tsnd v3 · v1) · v0))))
+                      v0)))
+    (tlam (tlam
+      (tsnd (trec
+         (* (w_0, g_0) *)
+         (tpair (tcast eW0 (tfst v1))
+                (tlam (tpair (tcast (eq_sym eC0) v0)
+                             (tpair tzero
+                                    (tpair (tdefault (W Q))
+                                           (tdefault (C (psucc Q))))))))
+         (* λk (w_k, g_k). (w_(k+1), g_(k+1)) *)
+         (tlam (tlam (tpair
+            (tcast eWS (tfst (tsnd v3 · v1) · tfst v0))
+            (tlam
+               (let cS := tcast (eq_sym eCS) v0 in
+                let c' := tsnd (tsnd v4 · v2) · tfst v1 · cS in
+                tif (subst (sub_at0 wkn5 v2) (diaT Q)
+                       · tfst v1 · c')
+                    (tpair (tdefault (C (psub1 Q tzero)))
+                           (tpair v2 (tpair (tfst v1) cS)))
+                    (tsnd v1 · c'))))))
+         (tfst v0))
+       · tsnd v0))).
+
 (** ** The proof translation
 
-    [wit d : tm Γ (W A)] is the Dialectica realizer extracted from [d].  A
-    witness of an implication is a *pair*: the forward map on witnesses and
-    the backward map on counters, so each axiom below is a small System T
-    program (they are the de Bruijn renderings of the programs in Bauer's
-    [Theorem]s, adapted to product counters for [∧]).
-
-    Free number variables of [A] are just term variables of type [tN] in [Γ],
-    so no closure/abstraction is needed: axioms mentioning arbitrary numeric
-    terms [t] simply embed (weakenings of) [t]. *)
+    [wit d : tm Γ (W A)] dispatches each proof rule to its realizer
+    combinator.  Since [tm] is intrinsically typed, type correctness of the
+    whole translation is enforced by construction. *)
 
 Fixpoint wit {Γ} {P : prp Γ} (d : proof Γ P) : tm Γ (W P) :=
   match d in proof Γ0 P0 return tm Γ0 (W P0) with
   | ax_true => tunit
-
-  | @ax_mp _ _ _ u a => tfst (wit u) · wit a
-
-  (* λw. v.1 (u.1 w) , λw c. u.2 w (v.2 (u.1 w) c) *)
-  | @ax_chain _ _ _ _ u v =>
-      tpair (tlam (tfst (wk1 (wit v)) · (tfst (wk1 (wit u)) · v0)))
-            (tlam (tlam (tsnd (wk1 (wk1 (wit u))) · v1 ·
-                           (tsnd (wk1 (wk1 (wit v))) · (tfst (wk1 (wk1 (wit u))) · v1) · v0))))
-
-  (* λw. if w.1 then w.2.1 else w.2.2 , λw c. (c, c) *)
-  | @ax_or_contr _ _ =>
-      tpair (tlam (tif (tfst v0) (tfst (tsnd v0)) (tsnd (tsnd v0))))
-            (tlam (tlam (tpair v0 v0)))
-
-  (* λw. (w, w) , λw c. if |P|(w, c.1) then c.2 else c.1
-     — the contraction that needs the internal decision [diaT]. *)
-  | @ax_and_contr _ P1 =>
-      tpair (tlam (tpair v0 v0))
-            (tlam (tlam (tif (wk1 (wk1 (diaT P1)) · v1 · tfst v0)
-                             (tsnd v0) (tfst v0))))
-
-  (* λw. (true, (w, dummy)) , λw c. c.1 *)
-  | @ax_or_inl _ _ Q1 =>
-      tpair (tlam (tpair ttrue (tpair v0 (tdefault (W Q1)))))
-            (tlam (tlam (tfst v0)))
-
-  (* λw. w.1 , λw c. (c, dummy) *)
-  | @ax_and_eliml _ _ Q1 =>
-      tpair (tlam (tfst v0))
-            (tlam (tlam (tpair v0 (tdefault (C Q1)))))
-
-  (* λw. (¬w.1, (w.2.2, w.2.1)) , λw c. (c.2, c.1) *)
-  | @ax_or_comm _ _ _ =>
-      tpair (tlam (tpair (tnegb (tfst v0)) (tpair (tsnd (tsnd v0)) (tfst (tsnd v0)))))
-            (tlam (tlam (tpair (tsnd v0) (tfst v0))))
-
-  | @ax_and_comm _ _ _ =>
-      tpair (tlam (tpair (tsnd v0) (tfst v0)))
-            (tlam (tlam (tpair (tsnd v0) (tfst v0))))
-
-  (* λw. (w.1, (w.2.1, u.1 w.2.2)) , λw c. (c.1, u.2 w.2.2 c.2) *)
-  | @ax_or_distr _ _ _ _ u =>
-      tpair (tlam (tpair (tfst v0)
-                         (tpair (tfst (tsnd v0)) (tfst (wk1 (wit u)) · tsnd (tsnd v0)))))
-            (tlam (tlam (tpair (tfst v0)
-                               (tsnd (wk1 (wk1 (wit u))) · tsnd (tsnd v1) · tsnd v0))))
-
-  (* λp. ( λq. u.1 (p,q) , λq c. (u.2 (p,q) c).2 ) , λp qc. (u.2 (p, qc.1) qc.2).1 *)
-  | @ax_cur _ _ _ _ u =>
-      tpair (tlam (tpair
-               (tlam (tfst (wk1 (wk1 (wit u))) · tpair v1 v0))
-               (tlam (tlam (tsnd (tsnd (wk1 (wk1 (wk1 (wit u)))) · tpair v2 v1 · v0))))))
-            (tlam (tlam (tfst (tsnd (wk1 (wk1 (wit u))) · tpair v1 (tfst v0) · tsnd v0))))
-
-  (* λw. (u.1 w.1).1 w.2 ,
-     λw c. ( u.2 w.1 (w.2, c) , (u.1 w.1).2 w.2 c ) *)
-  | @ax_uncur _ _ _ _ u =>
-      tpair (tlam (tfst (tfst (wk1 (wit u)) · tfst v0) · tsnd v0))
-            (tlam (tlam (tpair
-               (tsnd (wk1 (wk1 (wit u))) · tfst v1 · tpair (tsnd v1) v0)
-               (tsnd (tfst (wk1 (wk1 (wit u))) · tfst v1) · tsnd v1 · v0))))
-
-  | @ax_exfalso _ P1 =>
-      tpair (tlam (tdefault (W P1)))
-            (tlam (tlam tunit))
-
-  (* u : tm (tN :: Γ) (W (pwk P ⊃ Q));  the extra variable is the ∀-bound one.
-     f = λw n. (u[x:=n]).1 w   g = λw (n,c). (u[x:=n]).2 w c *)
-  | @ax_all_intro _ P1 Q1 u =>
-      let eW := W_ren wk P1 in
-      let eC := C_ren wk P1 in
-      tpair (tlam (tlam
-               (tfst (subst (sub_at0 wkn2 v0) (wit u))
-                  · tcast (eq_sym eW) v1)))
-            (tlam (tlam (tcast eC
-               (tsnd (subst (sub_at0 wkn2 (tfst v0)) (wit u))
-                  · tcast (eq_sym eW) v1 · tsnd v0))))
-
-  (* f = λw. w t   g = λw c. (t, c) *)
-  | @ax_all_elim _ Q1 t =>
-      let eW := W_sub (sub1 t) Q1 in
-      let eC := C_sub (sub1 t) Q1 in
-      tpair (tlam (tcast (eq_sym eW) (v0 · wk1 t)))
-            (tlam (tlam (tpair (wk1 (wk1 t)) (tcast eC v0))))
-
-  (* f = λw. (t, w)   g = λw c. c *)
-  | @ax_ex_intro _ Q1 t =>
-      let eW := W_sub (sub1 t) Q1 in
-      let eC := C_sub (sub1 t) Q1 in
-      tpair (tlam (tpair (wk1 t) (tcast eW v0)))
-            (tlam (tlam (tcast (eq_sym eC) v0)))
-
-  (* u : tm (tN :: Γ) (W (Q ⊃ pwk P)).
-     f = λ(n,w). (u[x:=n]).1 w   g = λ(n,w) c. (u[x:=n]).2 w c *)
-  | @ax_ex_elim _ P1 Q1 u =>
-      let eW := W_ren wk P1 in
-      let eC := C_ren wk P1 in
-      tpair (tlam (tcast eW
-               (tfst (subst (sub_at0 wk (tfst v0)) (wit u)) · tsnd v0)))
-            (tlam (tlam
-               (tsnd (subst (sub_at0 wkn2 (tfst v1)) (wit u))
-                  · tsnd v1 · tcast (eq_sym eC) v0)))
-
+  | @ax_mp _ _ _ u a => r_mp (wit u) (wit a)
+  | @ax_chain _ _ _ _ u v => r_chain (wit u) (wit v)
+  | @ax_or_contr _ _ => r_or_contr
+  | @ax_and_contr _ _ => r_and_contr
+  | @ax_or_inl _ _ _ => r_or_inl
+  | @ax_and_eliml _ _ _ => r_and_eliml
+  | @ax_or_comm _ _ _ => r_or_comm
+  | @ax_and_comm _ _ _ => r_and_comm
+  | @ax_or_distr _ _ _ _ u => r_or_distr (wit u)
+  | @ax_cur _ _ _ _ u => r_cur (wit u)
+  | @ax_uncur _ _ _ _ u => r_uncur (wit u)
+  | @ax_exfalso _ _ => r_exfalso
+  | @ax_all_intro _ _ _ u => r_all_intro (wit u)
+  | @ax_all_elim _ _ t => r_all_elim t
+  | @ax_ex_intro _ _ t => r_ex_intro t
+  | @ax_ex_elim _ _ _ u => r_ex_elim (wit u)
   | ax_eq_refl _ => tunit
-
-  (* All atoms have trivial witnesses, so Leibniz is transport:
-     λ_. ( λw. w , λw c. c ) , λ_ c. tt *)
-  | @ax_leibniz _ Q1 t s =>
-      let eWt := W_sub (sub1 t) Q1 in
-      let eWs := W_sub (sub1 s) Q1 in
-      let eCt := C_sub (sub1 t) Q1 in
-      let eCs := C_sub (sub1 s) Q1 in
-      tpair (tlam (tpair
-               (tlam (tcast (eq_trans eWt (eq_sym eWs)) v0))
-               (tlam (tlam (tcast (eq_trans eCs (eq_sym eCt)) v0)))))
-            (tlam (tlam tunit))
-
-  | ax_succ_nonzero _ =>
-      tpair (tlam tunit) (tlam (tlam tunit))
-
-  | ax_succ_inj _ _ =>
-      tpair (tlam tunit) (tlam (tlam tunit))
-
-  (* Induction.  Write the premise p = (z, s) with
-       z : W Q[0]                                    (base witness)
-       s : N ⇒ (W Q ⇒ W Q[S x]) × (W Q ⇒ C Q[S x] ⇒ C Q)   (step witness)
-     Forward: λp n. rec z (λk r. (p.2 k).1 r) n — primitive recursion.
-     Backward: given a counter (n, c) against [∀x.Q], search downward from n
-     for a failing step (Goedel's / Bauer's [search]): recursion computes the
-     pair (w_k, g_k) where w_k realizes Q[k] and
-       g_0     c = (c, dummy)
-       g_(k+1) c = let c' = (p.2 k).2 w_k c in
-                   if |Q[k]|(w_k, c') then (dummy, (k, (w_k, c))) else g_k c'
-     returning a counter against the premise conjunction. *)
-  | @ax_ind Γ0 Q1 =>
-      let eW0 := W_sub (sub1 tzero) Q1 in
-      let eC0 := C_sub (sub1 tzero) Q1 in
-      let eWS := W_sub sub_succ Q1 in
-      let eCS := C_sub sub_succ Q1 in
-      tpair
-        (tlam (tlam (trec (tcast eW0 (tfst v1))
-                          (tlam (tlam (tcast eWS (tfst (tsnd v3 · v1) · v0))))
-                          v0)))
-        (tlam (tlam
-          (tsnd (trec
-             (* (w_0, g_0) *)
-             (tpair (tcast eW0 (tfst v1))
-                    (tlam (tpair (tcast (eq_sym eC0) v0)
-                                 (tpair tzero
-                                        (tpair (tdefault (W Q1))
-                                               (tdefault (C (psucc Q1))))))))
-             (* λk (w_k, g_k). (w_(k+1), g_(k+1)) *)
-             (tlam (tlam (tpair
-                (tcast eWS (tfst (tsnd v3 · v1) · tfst v0))
-                (tlam
-                   (let cS := tcast (eq_sym eCS) v0 in
-                    let c' := tsnd (tsnd v4 · v2) · tfst v1 · cS in
-                    tif (subst (sub_at0 wkn5 v2) (diaT Q1)
-                           · tfst v1 · c')
-                        (tpair (tdefault (C (psub1 Q1 tzero)))
-                               (tpair v2 (tpair (tfst v1) cS)))
-                        (tsnd v1 · c'))))))
-             (tfst v0))
-           · tsnd v0)))
+  | @ax_leibniz _ _ t s => r_leibniz t s
+  | ax_succ_nonzero _ => r_atom_imp
+  | ax_succ_inj _ _ => r_atom_imp
+  | @ax_ind _ _ => r_ind
   end.
 
 (** ** Validity
@@ -376,14 +419,11 @@ Definition valid {Γ} (A : prp Γ) (t : tm Γ (W A)) : Prop :=
   forall ρ c, EEqE Γ ρ ρ -> EEq (C A) c c ->
     dia A ρ (tmden t ρ) c = true.
 
-(** Soundness — the statement this translation is aiming at:
-
-      [forall Γ (A : prp Γ) (d : proof Γ A), valid A (wit d)]
-
-    Proving it is the natural next milestone; it needs the usual commutation
-    lemmas between [tm_ren]/[subst] and [tmden] (and their consequences for
-    [diaT] under [pren]/[psub]), after which each axiom's verification is the
-    corresponding [Theorem] of theories_old/intuitionistic.v. *)
+(** Soundness — [forall Γ (A : prp Γ) (d : proof Γ A), valid A (wit d)] —
+    is proved in Validity.v ([soundness]), on top of the [tm_ren]/[subst]
+    commutation lemmas of Semantics.v and the [dia] characterization; each
+    axiom's verification is the analogue of the corresponding [Theorem] of
+    theories_old/intuitionistic.v, transposed to the PER discipline. *)
 
 (** ** Examples *)
 
@@ -408,8 +448,8 @@ Definition ex_succ : proof [] (pAll (pEx (pEq v0 (tsuc v1)))) :=
 Example ex_succ_val : tmden (wit ex_succ) tt 5 = (6, tt).
 Proof. reflexivity. Qed.
 
-(** Validity of the two examples — instances of the (yet unproven) general
-    soundness theorem, checked by computation. *)
+(** Validity of the two examples — concrete instances of the general
+    soundness theorem, retained as computational sanity checks. *)
 
 Example ex_two_valid : valid _ (wit ex_two).
 Proof. intros ρ c _ _; destruct ρ, c; reflexivity. Qed.

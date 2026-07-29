@@ -78,10 +78,8 @@ Definition pwk {Γ S} (A : prp Γ) : prp (S :: Γ) := pren wk A.
 Definition psub1 {Γ} (A : prp (tN :: Γ)) (t : tm Γ tN) : prp Γ :=
   psub (sub1 t) A.
 
-(** [A(x)] ↦ [A(S x)]: needed to state induction. *)
-Definition sub_succ {Γ} : sub (tN :: Γ) (tN :: Γ) :=
-  fun T x => vcase x (tm (tN :: Γ)) (tsuc v0) (fun T' y => tvar (vs y)).
-
+(** [A(x)] ↦ [A(S x)] (via [sub_succ] from Terms.v): needed to state
+    induction. *)
 Definition psucc {Γ} (A : prp (tN :: Γ)) : prp (tN :: Γ) := psub sub_succ A.
 
 (** ** Proofs
