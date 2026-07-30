@@ -107,5 +107,22 @@ The development includes executable examples showing that:
   exposes the residual induction skeleton in normal form, and has its
   arithmetic matrix checked at `x = 5`.
 
+## OCaml extraction
+
+`extraction/` (standalone, mirroring the `nbe-system-t` setup) extracts the
+computational pipeline — `W`/`C`, `diaT`, `wit`, and `realizer` with the NbE
+normalizer — to OCaml. Its dune driver pretty-prints the extracted realizers
+of the showcase derivations and replays their closed Dialectica games with
+the extracted normalizer, checking every matrix comes out `true`:
+
+```
+make -C extraction        # extract, build, run
+```
+
+`reference/dialectica_native.ml` is a hand-written, idiomatic (and
+`Obj.magic`-free) OCaml rendering of the same pipeline, in the spirit of
+`nbe-system-t`'s `reference/nbe_native.ml`; its driver asserts the same
+normal forms the Rocq theorems prove (`ocaml reference/dialectica_native.ml`).
+
 See `PROGRESS.md` for proof-design details, milestone history, and the
 relationship to the older reference developments.
