@@ -33,15 +33,15 @@
     - Induction is interpreted by primitive recursion (forward) paired with
       Goedel's counterexample *search* (backward), both single [trec]s.
 
-    - The matrix is also given denotationally ([dia] below, via the evaluator
-      of Eval.v), yielding the validity notion; the soundness theorem
-      [forall d : proof Γ A, valid A (wit d)] is proved in Validity.v
-      ([soundness]), axiom-free.  This file is the *translation*. *)
+    - [Validity.v] gives [diaT] a denotational reading [dia], defines
+      validity, and proves the axiom-free soundness theorem
+      [forall d : proof Γ A, valid A (wit d)].  This file contains only the
+      syntactic/computational translation. *)
 
-From Stdlib Require Import List Bool.
+From Stdlib Require Import List.
 Import ListNotations.
 From NbE Require Import Syntax OPE Subst.
-From SystemT Require Import Terms Eval Semantics HA.
+From SystemT Require Import Terms HA.
 
 Open Scope ty_scope.
 Open Scope tm_scope.
@@ -86,7 +86,7 @@ with C {Γ} (A : prp Γ) : ty :=
 (** [W] and [C] are invariant under renaming and substitution — these only
     change the atoms, which contribute [tUnit].  The proofs must stay
     transparent ([Defined]) so that casts along them compute away in the
-    extracted examples below. *)
+    extracted examples in [Examples.v]. *)
 
 Lemma WC_pren {Γ} (A : prp Γ) :
   forall Δ (o : ope Δ Γ),
@@ -133,31 +133,6 @@ Definition W_sub {Δ Γ} (σ : sub Δ Γ) (A : prp Γ) : W (psub σ A) = W A :=
 Definition C_sub {Δ Γ} (σ : sub Δ Γ) (A : prp Γ) : C (psub σ A) = C A :=
   snd (WC_psub A Δ σ).
 
-(** The trivial-move fragments of HA.v mean what their name says: they
-    guarantee PER-triviality of the corresponding move types. *)
-Lemma wtriv_ctriv_triv : forall {Γ} (A : prp Γ),
-    (wtriv A = true -> triv (W A) = true)
-    /\ (ctriv A = true -> triv (C A) = true).
-Proof.
-  induction A as
-    [ Γ b | Γ A1 IH1 A2 IH2 | Γ A1 IH1 A2 IH2 | Γ A1 IH1 A2 IH2
-    | Γ A1 IH1 | Γ A1 IH1 ]; simpl; split; intros H; try discriminate.
-  - reflexivity.
-  - reflexivity.
-  - apply andb_true_iff in H; destruct H as [H1 H2].
-    rewrite (proj1 IH1 H1), (proj1 IH2 H2); reflexivity.
-  - apply andb_true_iff in H; destruct H as [H1 H2].
-    rewrite (proj2 IH1 H1), (proj2 IH2 H2); reflexivity.
-  - apply andb_true_iff in H; destruct H as [H1 H2].
-    rewrite (proj2 IH1 H1), (proj2 IH2 H2); reflexivity.
-  - apply andb_true_iff in H; destruct H as [H1 H2].
-    rewrite (proj1 IH2 H2), (proj2 IH1 H1); reflexivity.
-  - apply andb_true_iff in H; destruct H as [H1 H2].
-    rewrite (proj1 IH1 H1), (proj2 IH2 H2); reflexivity.
-  - exact (proj1 IH1 H).
-  - exact (proj2 IH1 H).
-Qed.
-
 (** ** The matrix, internally
 
     [diaT A : W A ⇒ C A ⇒ Bool] is the quantifier-free matrix [|A|(w, c)] of
@@ -183,11 +158,11 @@ Fixpoint diaT {Γ} (A : prp Γ) : tm Γ (W A ⇒ C A ⇒ tBool) :=
                          (wk1 (wk1 (diaT D)) · (tfst v1 · tfst v0) · tsnd v0)))
   | pAll B =>
       (* |B[x := c.1]|(w (c.1), c.2) *)
-      tlam (tlam (subst (sub_at0 wkn2 (tfst v0)) (diaT B)
+      tlam (tlam (subst (sub_at0 (drop_prefix [_; _]) (tfst v0)) (diaT B)
                     · (v1 · tfst v0) · tsnd v0))
   | pEx B =>
       (* |B[x := w.1]|(w.2, c) *)
-      tlam (tlam (subst (sub_at0 wkn2 (tfst v1)) (diaT B)
+      tlam (tlam (subst (sub_at0 (drop_prefix [_; _]) (tfst v1)) (diaT B)
                     · tsnd v1 · v0))
   end.
 
@@ -288,25 +263,25 @@ Definition r_all_intro {Γ} {P : prp Γ} {Q : prp (tN :: Γ)}
   let eW := W_ren wk P in
   let eC := C_ren wk P in
   tpair (tlam (tlam
-           (tfst (subst (sub_at0 wkn2 v0) u)
+           (tfst (subst (sub_at0 (drop_prefix [_; _]) v0) u)
               · tcast (eq_sym eW) v1)))
         (tlam (tlam (tcast eC
-           (tsnd (subst (sub_at0 wkn2 (tfst v0)) u)
+           (tsnd (subst (sub_at0 (drop_prefix [_; _]) (tfst v0)) u)
               · tcast (eq_sym eW) v1 · tsnd v0)))).
 
 (* f = λw. w t   g = λw c. (t, c) *)
 Definition r_all_elim {Γ} {Q : prp (tN :: Γ)} (t : tm Γ tN) :
   tm Γ (W (pAll Q ⊃ psub1 Q t)) :=
-  let eW := W_sub (sub1 t) Q in
-  let eC := C_sub (sub1 t) Q in
+  let eW := W_sub (scons t) Q in
+  let eC := C_sub (scons t) Q in
   tpair (tlam (tcast (eq_sym eW) (v0 · wk1 t)))
         (tlam (tlam (tpair (wk1 (wk1 t)) (tcast eC v0)))).
 
 (* f = λw. (t, w)   g = λw c. c *)
 Definition r_ex_intro {Γ} {Q : prp (tN :: Γ)} (t : tm Γ tN) :
   tm Γ (W (psub1 Q t ⊃ pEx Q)) :=
-  let eW := W_sub (sub1 t) Q in
-  let eC := C_sub (sub1 t) Q in
+  let eW := W_sub (scons t) Q in
+  let eC := C_sub (scons t) Q in
   tpair (tlam (tpair (wk1 t) (tcast eW v0)))
         (tlam (tlam (tcast (eq_sym eC) v0))).
 
@@ -319,17 +294,17 @@ Definition r_ex_elim {Γ} {P : prp Γ} {Q : prp (tN :: Γ)}
   tpair (tlam (tcast eW
            (tfst (subst (sub_at0 wk (tfst v0)) u) · tsnd v0)))
         (tlam (tlam
-           (tsnd (subst (sub_at0 wkn2 (tfst v1)) u)
+           (tsnd (subst (sub_at0 (drop_prefix [_; _]) (tfst v1)) u)
               · tsnd v1 · tcast (eq_sym eC) v0))).
 
 (* All atoms have trivial witnesses, so Leibniz is transport:
    λ_. ( λw. w , λw c. c ) , λ_ c. tt *)
 Definition r_leibniz {Γ} {Q : prp (tN :: Γ)} (t s : tm Γ tN) :
   tm Γ (W (pEq t s ⊃ (psub1 Q t ⊃ psub1 Q s))) :=
-  let eWt := W_sub (sub1 t) Q in
-  let eWs := W_sub (sub1 s) Q in
-  let eCt := C_sub (sub1 t) Q in
-  let eCs := C_sub (sub1 s) Q in
+  let eWt := W_sub (scons t) Q in
+  let eWs := W_sub (scons s) Q in
+  let eCt := C_sub (scons t) Q in
+  let eCs := C_sub (scons s) Q in
   tpair (tlam (tpair
            (tlam (tcast (eq_trans eWt (eq_sym eWs)) v0))
            (tlam (tlam (tcast (eq_trans eCs (eq_sym eCt)) v0)))))
@@ -354,8 +329,8 @@ Definition r_atom_imp {Γ} {b b' : tm Γ tBool} :
    returning a counter against the premise conjunction. *)
 Definition r_ind {Γ} {Q : prp (tN :: Γ)} :
   tm Γ (W ((psub1 Q tzero ∧ pAll (Q ⊃ psucc Q)) ⊃ pAll Q)) :=
-  let eW0 := W_sub (sub1 tzero) Q in
-  let eC0 := C_sub (sub1 tzero) Q in
+  let eW0 := W_sub (scons tzero) Q in
+  let eC0 := C_sub (scons tzero) Q in
   let eWS := W_sub sub_succ Q in
   let eCS := C_sub sub_succ Q in
   tpair
@@ -376,7 +351,7 @@ Definition r_ind {Γ} {Q : prp (tN :: Γ)} :
             (tlam
                (let cS := tcast (eq_sym eCS) v0 in
                 let c' := tsnd (tsnd v4 · v2) · tfst v1 · cS in
-                tif (subst (sub_at0 wkn5 v2) (diaT Q)
+                tif (subst (sub_at0 (drop_prefix [_; _; _; _; _]) v2) (diaT Q)
                        · tfst v1 · c')
                     (tpair (tdefault (C (psub1 Q tzero)))
                            (tpair v2 (tpair (tfst v1) cS)))
@@ -460,86 +435,3 @@ Fixpoint wit {Γ} {P : prp Γ} (d : proof Γ P) : tm Γ (W P) :=
   | ax_markov P _ _ => r_markov P
   | ax_ip P Q _ => r_ip P Q
   end.
-
-(** ** Validity
-
-    The Dialectica matrix, denotationally (via Eval.v), and the interpretation
-    proper: [A] is valid when some System T witness [t] beats every counter.
-
-    Quantification is over the PER *domain* — self-related environments and
-    counters — not over arbitrary values.  Under the axiom-free PER
-    discipline (Semantics.v) this restriction is forced: the commutation
-    lemmas soundness relies on only speak about values in the domain, and an
-    unrestricted statement would be false — e.g. it would make every
-    [F : (nat -> nat) -> nat] respect pointwise equality of its argument,
-    which is exactly the extensionality we do not assume.  ([diaT] itself
-    substitutes internally at quantifiers, so even reaching the boolean
-    observation passes through higher-order values first.)
-
-    The restriction is cheap where it matters:
-    - closed formulas ([Γ = []]): the environment premise is trivial;
-    - pure HA contexts (all [tN]): environments are tuples of numbers,
-      self-related for free;
-    - the witness side needs no premise: [tmden t ρ] is self-related by the
-      fundamental lemma (D2 step 2) whenever [ρ] is. *)
-
-Definition dia {Γ} (A : prp Γ) (ρ : cxtden Γ)
-  (w : tyden (W A)) (c : tyden (C A)) : bool :=
-  tmden (diaT A) ρ w c.
-
-Definition valid {Γ} (A : prp Γ) (t : tm Γ (W A)) : Prop :=
-  forall ρ c, EEqE Γ ρ ρ -> EEq (C A) c c ->
-    dia A ρ (tmden t ρ) c = true.
-
-(** Soundness — [forall Γ (A : prp Γ) (d : proof Γ A), valid A (wit d)] —
-    is proved in Validity.v ([soundness]), on top of the [tm_ren]/[subst]
-    commutation lemmas of Semantics.v and the [dia] characterization; each
-    axiom's verification is the analogue of the corresponding [Theorem] of
-    theories_old/intuitionistic.v, transposed to the PER discipline. *)
-
-(** ** Examples *)
-
-(** [⊢ ∃y. y = 2], by [ax_ex_intro] at the numeral 2.  Note that the required
-    identification of [psub1 (pEq v0 (numeral 2)) (numeral 2)] with
-    [pEq (numeral 2) (numeral 2)] is definitional — substitution computes. *)
-Definition ex_two : proof [] (pEx (pEq v0 (numeral 2))) :=
-  ax_mp (@ax_ex_intro [] (pEq v0 (numeral 2)) (numeral 2))
-        (ax_eq_refl (numeral 2)).
-
-(** Its extracted witness evaluates to the pair (2, tt): the interpretation
-    really produces the existential witness. *)
-Example ex_two_val : tmden (wit ex_two) tt = (2, tt).
-Proof. reflexivity. Qed.
-
-(** [⊢ ∀x. ∃y. y = S x].  The extracted realizer is a System T program of
-    type [tN ⇒ tN × tUnit] computing the successor function. *)
-Definition ex_succ : proof [] (pAll (pEx (pEq v0 (tsuc v1)))) :=
-  d_gen (ax_mp (@ax_ex_intro [tN] (pEq v0 (tsuc v1)) (tsuc v0))
-               (ax_eq_refl (tsuc v0))).
-
-Example ex_succ_val : tmden (wit ex_succ) tt 5 = (6, tt).
-Proof. reflexivity. Qed.
-
-(** Validity of the two examples — concrete instances of the general
-    soundness theorem, retained as computational sanity checks. *)
-
-Example ex_two_valid : valid _ (wit ex_two).
-Proof. intros ρ c _ _; destruct ρ, c; reflexivity. Qed.
-
-Example ex_succ_valid : valid _ (wit ex_succ).
-Proof.
-  intros ρ c _ _; destruct ρ; destruct c as [n u]; destruct u.
-  exact (teqb_refl (Γ := []) tt (S n)).
-Qed.
-
-(** The induction realizer computes.  Take [Q := iszero x]; feed the backward
-    search a (vacuous) premise witness and the counter [(3, tt)] against
-    [∀x. Q].  The search walks down 3, 2, 1 testing the matrix [|Q[k]|]
-    (i.e. running [iszero k] — false for k = 2, 1) and stops at the first
-    point whose step it can blame, reporting the step counter at index 0 in
-    the second component. *)
-Example ex_ind_search :
-  tmden (tsnd (wit (@ax_ind [] (pAtom (tiszero · v0))))) tt
-        (tt, fun _ => (fun w => w, fun w c => c)) (3, tt)
-  = (tt, (0, (tt, tt))).
-Proof. reflexivity. Qed.

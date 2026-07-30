@@ -11,7 +11,7 @@
       the matrix of the original in the pushed-forward environment, modulo
       [tyden_cast] transports along [W_ren]/[W_sub]/[C_ren]/[C_sub] — the
       "cast hot spot" of the plan, discharged with the UIP-based collapse
-      lemmas of Semantics.v;
+      lemmas of [NbE.SetModelPER];
     - corollaries [dia_pwk], [dia_psub1], [dia_psucc]: the three instances
       the validity lemmas of step 6 actually consume.
 
@@ -50,12 +50,75 @@
 
 From Stdlib Require Import List Bool.
 Import ListNotations.
-From NbE Require Import Syntax OPE Subst DefEq.
-From SystemT Require Import Terms Eval Semantics HA Dialectica.
+From NbE Require Import Syntax OPE Subst DefEq SetModel SetModelPER.
+From SystemT Require Import Terms Semantics HA Dialectica.
 
 Open Scope ty_scope.
 Open Scope tm_scope.
 Open Scope prp_scope.
+
+(** ** Denotational matrix and validity
+
+    The Dialectica matrix, denotationally via [NbE.SetModel], and the
+    interpretation proper: [A] is valid when some System T witness [t] beats
+    every counter.
+
+    Quantification is over the PER *domain* — self-related environments and
+    counters — not over arbitrary values.  Under the axiom-free PER
+    discipline ([NbE.SetModelPER]) this restriction is forced: the
+    commutation lemmas soundness relies on only speak about values in the
+    domain, and an unrestricted statement would be false — e.g. it would make every
+    [F : (nat -> nat) -> nat] respect pointwise equality of its argument,
+    which is exactly the extensionality we do not assume.  ([diaT] itself
+    substitutes internally at quantifiers, so even reaching the boolean
+    observation passes through higher-order values first.)
+
+    The restriction is cheap where it matters:
+    - closed formulas ([Γ = []]): the environment premise is trivial;
+    - pure HA contexts (all [tN]): environments are tuples of numbers,
+      self-related for free;
+    - the witness side needs no premise: [tmden t ρ] is self-related by the
+      fundamental lemma whenever [ρ] is. *)
+
+Definition dia {Γ} (A : prp Γ) (ρ : cxtden Γ)
+  (w : tyden (W A)) (c : tyden (C A)) : bool :=
+  tmden (diaT A) ρ w c.
+
+Definition valid {Γ} (A : prp Γ) (t : tm Γ (W A)) : Prop :=
+  forall ρ c, EEqE Γ ρ ρ -> EEq (C A) c c ->
+    dia A ρ (tmden t ρ) c = true.
+
+(** The trivial-move fragments of HA.v mean what their name says: they
+    guarantee PER-triviality of the corresponding move types. *)
+Lemma wtriv_ctriv_triv : forall {Γ} (A : prp Γ),
+    (wtriv A = true -> triv (W A) = true)
+    /\ (ctriv A = true -> triv (C A) = true).
+Proof.
+  induction A as
+    [ Γ b | Γ A1 IH1 A2 IH2 | Γ A1 IH1 A2 IH2 | Γ A1 IH1 A2 IH2
+    | Γ A1 IH1 | Γ A1 IH1 ]; simpl; split; intros H; try discriminate.
+  - reflexivity.
+  - reflexivity.
+  - apply andb_true_iff in H; destruct H as [H1 H2].
+    rewrite (proj1 IH1 H1), (proj1 IH2 H2); reflexivity.
+  - apply andb_true_iff in H; destruct H as [H1 H2].
+    rewrite (proj2 IH1 H1), (proj2 IH2 H2); reflexivity.
+  - apply andb_true_iff in H; destruct H as [H1 H2].
+    rewrite (proj2 IH1 H1), (proj2 IH2 H2); reflexivity.
+  - apply andb_true_iff in H; destruct H as [H1 H2].
+    rewrite (proj1 IH2 H2), (proj2 IH1 H1); reflexivity.
+  - apply andb_true_iff in H; destruct H as [H1 H2].
+    rewrite (proj1 IH1 H1), (proj2 IH2 H2); reflexivity.
+  - exact (proj1 IH1 H).
+  - exact (proj2 IH1 H).
+Qed.
+
+(** Soundness — [forall Γ (A : prp Γ) (d : proof Γ A), valid A (wit d)] —
+    is proved below ([soundness]), on top of the [tm_ren]/[subst]
+    commutation lemmas of [NbE.SetModelPER], the local instances in
+    [Semantics.v], and the [dia] characterization; each axiom's verification
+    is the analogue of the corresponding [Theorem] of
+    theories_old/intuitionistic.v, transposed to the PER discipline. *)
 
 (** ** The matrix respects the PER *)
 
@@ -147,22 +210,22 @@ Lemma dia_all : forall {Γ} (B : prp (tN :: Γ)) (ρ ρ' : cxtden Γ)
 Proof.
   intros Γ B ρ ρ' w w' c c' Hρ Hw Hc.
   assert (Henv : EEqE (tN :: Γ)
-                   (subden (sub_at0 wkn2 (tfst v0)) (c', (w', ρ')))
+                   (subden (sub_at0 (drop_prefix [_; _]) (tfst v0)) (c', (w', ρ')))
                    (fst c', ρ')).
-  { pose proof (subden_sub_at0 wkn2 (tfst v0) (c', (w', ρ')) (c', (w', ρ'))
+  { pose proof (subden_sub_at0 (drop_prefix [_; _]) (tfst v0) (c', (w', ρ')) (c', (w', ρ'))
                   (conj (EEq_refl_r _ _ _ Hc)
                         (conj (EEq_refl_r _ _ _ Hw)
                               (EEqE_refl_r _ _ _ Hρ)))) as H2.
-    rewrite opeden_wkn2 in H2; exact H2. }
+    rewrite opeden_drop_prefix in H2; exact H2. }
   assert (Harr : EEq (W B ⇒ C B ⇒ tBool)
-                   (tmden (subst (sub_at0 wkn2 (tfst v0)) (diaT B)) (c, (w, ρ)))
+                   (tmden (subst (sub_at0 (drop_prefix [_; _]) (tfst v0)) (diaT B)) (c, (w, ρ)))
                    (tmden (diaT B) (fst c', ρ'))).
   { apply EEq_trans with
-      (b := tmden (diaT B) (subden (sub_at0 wkn2 (tfst v0)) (c', (w', ρ')))).
-    - exact (tmden_subst (diaT B) (sub_at0 wkn2 (tfst v0))
+      (b := tmden (diaT B) (subden (sub_at0 (drop_prefix [_; _]) (tfst v0)) (c', (w', ρ')))).
+    - exact (tmden_subst (diaT B) (sub_at0 (drop_prefix [_; _]) (tfst v0))
                (c, (w, ρ)) (c', (w', ρ')) (conj Hc (conj Hw Hρ))).
     - exact (tmden_EEqE (diaT B) _ _ Henv). }
-  assert (H : tmden (subst (sub_at0 wkn2 (tfst v0)) (diaT B)) (c, (w, ρ))
+  assert (H : tmden (subst (sub_at0 (drop_prefix [_; _]) (tfst v0)) (diaT B)) (c, (w, ρ))
                     (w (fst c)) (snd c)
               = dia B (fst c', ρ') (w' (fst c')) (snd c')).
   { exact (Harr _ _ (Hw _ _ (proj1 Hc)) _ _ (proj2 Hc)). }
@@ -176,22 +239,22 @@ Lemma dia_ex : forall {Γ} (B : prp (tN :: Γ)) (ρ ρ' : cxtden Γ)
 Proof.
   intros Γ B ρ ρ' w w' c c' Hρ Hw Hc.
   assert (Henv : EEqE (tN :: Γ)
-                   (subden (sub_at0 wkn2 (tfst v1)) (c', (w', ρ')))
+                   (subden (sub_at0 (drop_prefix [_; _]) (tfst v1)) (c', (w', ρ')))
                    (fst w', ρ')).
-  { pose proof (subden_sub_at0 wkn2 (tfst v1) (c', (w', ρ')) (c', (w', ρ'))
+  { pose proof (subden_sub_at0 (drop_prefix [_; _]) (tfst v1) (c', (w', ρ')) (c', (w', ρ'))
                   (conj (EEq_refl_r _ _ _ Hc)
                         (conj (EEq_refl_r _ _ _ Hw)
                               (EEqE_refl_r _ _ _ Hρ)))) as H2.
-    rewrite opeden_wkn2 in H2; exact H2. }
+    rewrite opeden_drop_prefix in H2; exact H2. }
   assert (Harr : EEq (W B ⇒ C B ⇒ tBool)
-                   (tmden (subst (sub_at0 wkn2 (tfst v1)) (diaT B)) (c, (w, ρ)))
+                   (tmden (subst (sub_at0 (drop_prefix [_; _]) (tfst v1)) (diaT B)) (c, (w, ρ)))
                    (tmden (diaT B) (fst w', ρ'))).
   { apply EEq_trans with
-      (b := tmden (diaT B) (subden (sub_at0 wkn2 (tfst v1)) (c', (w', ρ')))).
-    - exact (tmden_subst (diaT B) (sub_at0 wkn2 (tfst v1))
+      (b := tmden (diaT B) (subden (sub_at0 (drop_prefix [_; _]) (tfst v1)) (c', (w', ρ')))).
+    - exact (tmden_subst (diaT B) (sub_at0 (drop_prefix [_; _]) (tfst v1))
                (c, (w, ρ)) (c', (w', ρ')) (conj Hc (conj Hw Hρ))).
     - exact (tmden_EEqE (diaT B) _ _ Henv). }
-  assert (H : tmden (subst (sub_at0 wkn2 (tfst v1)) (diaT B)) (c, (w, ρ))
+  assert (H : tmden (subst (sub_at0 (drop_prefix [_; _]) (tfst v1)) (diaT B)) (c, (w, ρ))
                     (snd w) c
               = dia B (fst w', ρ') (snd w') c').
   { exact (Harr _ _ (proj2 Hw) _ _ Hc). }
@@ -500,13 +563,13 @@ Corollary dia_psub1 : forall {Γ} (A : prp (tN :: Γ)) (t : tm Γ tN)
     EEqE Γ ρ ρ' -> EEq (W (psub1 A t)) w w' -> EEq (C (psub1 A t)) c c' ->
     dia (psub1 A t) ρ w c
     = dia A (tmden t ρ', ρ')
-          (tyden_cast (W_sub (sub1 t) A) w') (tyden_cast (C_sub (sub1 t) A) c').
+          (tyden_cast (W_sub (scons t) A) w') (tyden_cast (C_sub (scons t) A) c').
 Proof.
   intros Γ A t ρ ρ' w w' c c' Hρ Hw Hc.
   etransitivity.
-  { exact (dia_psub A (sub1 t) ρ ρ' w w' c c' Hρ Hw Hc). }
+  { exact (dia_psub A (scons t) ρ ρ' w w' c c' Hρ Hw Hc). }
   apply dia_EEqE.
-  - exact (subden_sub1 t ρ' ρ' (EEqE_refl_r _ _ _ Hρ)).
+  - exact (subden_scons t ρ' ρ' (EEqE_refl_r _ _ _ Hρ)).
   - exact (EEq_cast _ _ _ (EEq_refl_r _ _ _ Hw)).
   - exact (EEq_cast _ _ _ (EEq_refl_r _ _ _ Hc)).
 Qed.
@@ -546,8 +609,8 @@ Section IndSem.
   Local Notation P0 := (psub1 Q tzero).
   Local Notation QS := (psucc Q).
   Local Notation prem := (P0 ∧ pAll (Q ⊃ QS)).
-  Local Notation eW0 := (W_sub (sub1 tzero) Q).
-  Local Notation eC0 := (C_sub (sub1 tzero) Q).
+  Local Notation eW0 := (W_sub (scons tzero) Q).
+  Local Notation eC0 := (C_sub (scons tzero) Q).
   Local Notation eWS := (W_sub sub_succ Q).
   Local Notation eCS := (C_sub sub_succ Q).
 
@@ -749,8 +812,8 @@ Section IndBridge.
   Local Notation P0 := (psub1 Q tzero).
   Local Notation QS := (psucc Q).
   Local Notation prem := (P0 ∧ pAll (Q ⊃ QS)).
-  Local Notation eW0 := (W_sub (sub1 tzero) Q).
-  Local Notation eC0 := (C_sub (sub1 tzero) Q).
+  Local Notation eW0 := (W_sub (scons tzero) Q).
+  Local Notation eC0 := (C_sub (scons tzero) Q).
   Local Notation eWS := (W_sub sub_succ Q).
   Local Notation eCS := (C_sub sub_succ Q).
 
@@ -798,7 +861,7 @@ Section IndBridge.
                 tmden ((tlam (tlam (tpair
                           (tcast eWS (tfst (tsnd v3 · v1) · tfst v0))
                           (tlam
-                             (tif (subst (sub_at0 wkn5 v2) (diaT Q) · tfst v1
+                             (tif (subst (sub_at0 (drop_prefix [_; _; _; _; _]) v2) (diaT Q) · tfst v1
                                      · (tsnd (tsnd v4 · v2) · tfst v1
                                           · tcast (eq_sym eCS) v0))
                                 (tpair (tdefault (C P0))
@@ -877,7 +940,7 @@ Section IndBridge.
                (tyden_cast (eq_sym eCS) c'))).
         { exact (proj2 (proj2 Hp k k eq_refl) _ _ (proj1 IH) _ _ HcSden). }
         assert (Hdia : EEq (W Q ⇒ C Q ⇒ tBool)
-            (tmden ((subst (sub_at0 wkn5 v2) (diaT Q))
+            (tmden ((subst (sub_at0 (drop_prefix [_; _; _; _; _]) v2) (diaT Q))
                       : tm (C Q :: (W Q × (C Q ⇒ C prem)) :: tN
                             :: C (pAll Q) :: W prem :: Γ)
                            (W Q ⇒ C Q ⇒ tBool))
@@ -885,16 +948,16 @@ Section IndBridge.
             (tmden (diaT Q) (k, ρ))).
         { apply EEq_trans with
             (b := tmden (diaT Q)
-                    (subden (sub_at0 wkn5 v2) (c, (h, (k, (nc, (p, ρ))))))).
-          - exact (tmden_subst (diaT Q) (sub_at0 wkn5 v2)
+                    (subden (sub_at0 (drop_prefix [_; _; _; _; _]) v2) (c, (h, (k, (nc, (p, ρ))))))).
+          - exact (tmden_subst (diaT Q) (sub_at0 (drop_prefix [_; _; _; _; _]) v2)
                      (c, (h, (k, (nc, (p, ρ)))))
                      (c, (h, (k, (nc, (p, ρ))))) Eself).
           - apply tmden_EEqE.
-            pose proof (subden_sub_at0 wkn5 v2
+            pose proof (subden_sub_at0 (drop_prefix [_; _; _; _; _]) v2
                           (c, (h, (k, (nc, (p, ρ)))))
                           (c, (h, (k, (nc, (p, ρ))))) Eself) as H2.
-            rewrite opeden_wkn5 in H2; exact H2. }
-        assert (Hcond : tmden ((subst (sub_at0 wkn5 v2) (diaT Q))
+            rewrite opeden_drop_prefix in H2; exact H2. }
+        assert (Hcond : tmden ((subst (sub_at0 (drop_prefix [_; _; _; _; _]) v2) (diaT Q))
                                  : tm (C Q :: (W Q × (C Q ⇒ C prem)) :: tN
                                        :: C (pAll Q) :: W prem :: Γ)
                                       (W Q ⇒ C Q ⇒ tBool))
@@ -911,7 +974,7 @@ Section IndBridge.
                                (tyden_cast (eq_sym eCS) c'))).
         { exact (Hdia _ _ (proj1 IH) _ _ Hcden). }
         assert (HH : EEq (C prem)
-            (if tmden ((subst (sub_at0 wkn5 v2) (diaT Q))
+            (if tmden ((subst (sub_at0 (drop_prefix [_; _; _; _; _]) v2) (diaT Q))
                          : tm (C Q :: (W Q × (C Q ⇒ C prem)) :: tN
                                :: C (pAll Q) :: W prem :: Γ)
                               (W Q ⇒ C Q ⇒ tBool))
@@ -1529,40 +1592,40 @@ Proof.
               (snd (tmden (r_all_elim (Q := Q) t) ρ) (fst cc) (snd cc)))
     eqn:HA; [| reflexivity].
   assert (HcastC : EEq (C Q)
-      (tmden ((tcast (C_sub (sub1 t) Q) v0)
+      (tmden ((tcast (C_sub (scons t) Q) v0)
                 : tm (C (psub1 Q t) :: W (pAll Q) :: Γ) (C Q))
          (snd cc, (fst cc, ρ)))
-      (tyden_cast (C_sub (sub1 t) Q) (snd cc))).
+      (tyden_cast (C_sub (scons t) Q) (snd cc))).
   { rewrite tmden_tcast; exact (EEq_cast _ _ _ Hc). }
   pose proof (tmden_wk2_EEq (S1 := C (psub1 Q t)) (S2 := W (pAll Q)) t
                 (snd cc) (snd cc) (fst cc) (fst cc) ρ ρ Hc Hw Hρ) as Hwt.
   assert (HP : dia (pAll Q) ρ (fst cc)
-                 (tmden t ρ, tyden_cast (C_sub (sub1 t) Q) (snd cc)) = true).
+                 (tmden t ρ, tyden_cast (C_sub (scons t) Q) (snd cc)) = true).
   { exact (eq_trans (eq_sym (dia_EEqE (pAll Q) ρ ρ (fst cc) (fst cc)
               (tmden (wk1 (S := C (psub1 Q t)) (wk1 (S := W (pAll Q)) t))
                  (snd cc, (fst cc, ρ)),
-               tmden ((tcast (C_sub (sub1 t) Q) v0)
+               tmden ((tcast (C_sub (scons t) Q) v0)
                         : tm (C (psub1 Q t) :: W (pAll Q) :: Γ) (C Q))
                  (snd cc, (fst cc, ρ)))
-              (tmden t ρ, tyden_cast (C_sub (sub1 t) Q) (snd cc))
+              (tmden t ρ, tyden_cast (C_sub (scons t) Q) (snd cc))
               Hρ Hw (conj Hwt HcastC))) HA). }
   pose proof (eq_trans (eq_sym (dia_all Q ρ ρ (fst cc) (fst cc)
-                (tmden t ρ, tyden_cast (C_sub (sub1 t) Q) (snd cc))
-                (tmden t ρ, tyden_cast (C_sub (sub1 t) Q) (snd cc))
+                (tmden t ρ, tyden_cast (C_sub (scons t) Q) (snd cc))
+                (tmden t ρ, tyden_cast (C_sub (scons t) Q) (snd cc))
                 Hρ Hw (conj HtD (EEq_cast _ _ _ Hc)))) HP) as HP2.
   cbn [fst snd] in HP2.
   assert (Hfw : EEq (W (psub1 Q t))
-      (tmden ((tcast (eq_sym (W_sub (sub1 t) Q)) (v0 · wk1 t))
+      (tmden ((tcast (eq_sym (W_sub (scons t) Q)) (v0 · wk1 t))
                 : tm (W (pAll Q) :: Γ) (W (psub1 Q t)))
          (fst cc, ρ))
-      (tyden_cast (eq_sym (W_sub (sub1 t) Q)) (fst cc (tmden t ρ)))).
+      (tyden_cast (eq_sym (W_sub (scons t) Q)) (fst cc (tmden t ρ)))).
   { rewrite tmden_tcast.
     apply EEq_cast.
     exact (Hw _ _ (tmden_wk1_EEq (S := W (pAll Q)) t (fst cc) (fst cc)
                      ρ ρ Hw Hρ)). }
   refine (eq_trans (dia_psub1 Q t ρ ρ
             (fst (tmden (r_all_elim (Q := Q) t) ρ) (fst cc))
-            (tyden_cast (eq_sym (W_sub (sub1 t) Q)) (fst cc (tmden t ρ)))
+            (tyden_cast (eq_sym (W_sub (scons t) Q)) (fst cc (tmden t ρ)))
             (snd cc) (snd cc) Hρ Hfw Hc) _).
   rewrite tyden_cast_cancel_sym.
   exact HP2.
@@ -1579,35 +1642,35 @@ Proof.
               (snd (tmden (r_ex_intro (Q := Q) t) ρ) (fst cc) (snd cc)))
     eqn:HA; [| reflexivity].
   assert (HcastC : EEq (C (psub1 Q t))
-      (tmden ((tcast (eq_sym (C_sub (sub1 t) Q)) v0)
+      (tmden ((tcast (eq_sym (C_sub (scons t) Q)) v0)
                 : tm (C Q :: W (psub1 Q t) :: Γ) (C (psub1 Q t)))
          (snd cc, (fst cc, ρ)))
-      (tyden_cast (eq_sym (C_sub (sub1 t) Q)) (snd cc))).
+      (tyden_cast (eq_sym (C_sub (scons t) Q)) (snd cc))).
   { rewrite tmden_tcast; exact (EEq_cast _ _ _ Hc). }
   assert (HP : dia (psub1 Q t) ρ (fst cc)
-                 (tyden_cast (eq_sym (C_sub (sub1 t) Q)) (snd cc)) = true).
+                 (tyden_cast (eq_sym (C_sub (scons t) Q)) (snd cc)) = true).
   { exact (eq_trans (eq_sym (dia_EEqE (psub1 Q t) ρ ρ (fst cc) (fst cc)
-              (tmden ((tcast (eq_sym (C_sub (sub1 t) Q)) v0)
+              (tmden ((tcast (eq_sym (C_sub (scons t) Q)) v0)
                         : tm (C Q :: W (psub1 Q t) :: Γ) (C (psub1 Q t)))
                  (snd cc, (fst cc, ρ)))
-              (tyden_cast (eq_sym (C_sub (sub1 t) Q)) (snd cc))
+              (tyden_cast (eq_sym (C_sub (scons t) Q)) (snd cc))
               Hρ Hw HcastC)) HA). }
   pose proof (eq_trans (eq_sym (dia_psub1 Q t ρ ρ (fst cc) (fst cc)
-                (tyden_cast (eq_sym (C_sub (sub1 t) Q)) (snd cc))
-                (tyden_cast (eq_sym (C_sub (sub1 t) Q)) (snd cc))
+                (tyden_cast (eq_sym (C_sub (scons t) Q)) (snd cc))
+                (tyden_cast (eq_sym (C_sub (scons t) Q)) (snd cc))
                 Hρ Hw (EEq_cast _ _ _ Hc))) HP) as HP2.
   rewrite tyden_cast_cancel_sym in HP2.
   assert (HcastW : EEq (W Q)
-      (tmden ((tcast (W_sub (sub1 t) Q) v0)
+      (tmden ((tcast (W_sub (scons t) Q) v0)
                 : tm (W (psub1 Q t) :: Γ) (W Q))
          (fst cc, ρ))
-      (tyden_cast (W_sub (sub1 t) Q) (fst cc))).
+      (tyden_cast (W_sub (scons t) Q) (fst cc))).
   { rewrite tmden_tcast; exact (EEq_cast _ _ _ Hw). }
   pose proof (tmden_wk1_EEq (S := W (psub1 Q t)) t (fst cc) (fst cc) ρ ρ
                 Hw Hρ) as Hwt.
   refine (eq_trans (dia_ex Q ρ ρ
             (fst (tmden (r_ex_intro (Q := Q) t) ρ) (fst cc))
-            (tmden t ρ, tyden_cast (W_sub (sub1 t) Q) (fst cc))
+            (tmden t ρ, tyden_cast (W_sub (scons t) Q) (fst cc))
             (snd cc) (snd cc) Hρ (conj Hwt HcastW) Hc) _).
   cbn [fst snd].
   exact HP2.
@@ -1638,59 +1701,59 @@ Proof.
   | |- implb ?b _ = true => destruct b eqn:HB; [| reflexivity]
   end.
   assert (HcastC : EEq (C (psub1 Q t))
-      (tmden ((tcast (eq_trans (C_sub (sub1 s) Q) (eq_sym (C_sub (sub1 t) Q)))
+      (tmden ((tcast (eq_trans (C_sub (scons s) Q) (eq_sym (C_sub (scons t) Q)))
                  v0)
                 : tm (C (psub1 Q s) :: W (psub1 Q t) :: W (pEq t s) :: Γ)
                      (C (psub1 Q t)))
          (snd (snd cc), (fst (snd cc), (fst cc, ρ))))
-      (tyden_cast (eq_trans (C_sub (sub1 s) Q) (eq_sym (C_sub (sub1 t) Q)))
+      (tyden_cast (eq_trans (C_sub (scons s) Q) (eq_sym (C_sub (scons t) Q)))
          (snd (snd cc)))).
   { rewrite tmden_tcast; exact (EEq_cast _ _ _ (proj2 Hc)). }
   assert (HBt : dia (psub1 Q t) ρ (fst (snd cc))
-      (tyden_cast (eq_trans (C_sub (sub1 s) Q) (eq_sym (C_sub (sub1 t) Q)))
+      (tyden_cast (eq_trans (C_sub (scons s) Q) (eq_sym (C_sub (scons t) Q)))
          (snd (snd cc))) = true).
   { exact (eq_trans (eq_sym (dia_EEqE (psub1 Q t) ρ ρ
               (fst (snd cc)) (fst (snd cc))
-              (tmden ((tcast (eq_trans (C_sub (sub1 s) Q)
-                                (eq_sym (C_sub (sub1 t) Q))) v0)
+              (tmden ((tcast (eq_trans (C_sub (scons s) Q)
+                                (eq_sym (C_sub (scons t) Q))) v0)
                         : tm (C (psub1 Q s) :: W (psub1 Q t)
                               :: W (pEq t s) :: Γ) (C (psub1 Q t)))
                  (snd (snd cc), (fst (snd cc), (fst cc, ρ))))
-              (tyden_cast (eq_trans (C_sub (sub1 s) Q)
-                             (eq_sym (C_sub (sub1 t) Q))) (snd (snd cc)))
+              (tyden_cast (eq_trans (C_sub (scons s) Q)
+                             (eq_sym (C_sub (scons t) Q))) (snd (snd cc)))
               Hρ (proj1 Hc) HcastC)) HB). }
   pose proof (eq_trans (eq_sym (dia_psub1 Q t ρ ρ
                 (fst (snd cc)) (fst (snd cc))
-                (tyden_cast (eq_trans (C_sub (sub1 s) Q)
-                               (eq_sym (C_sub (sub1 t) Q))) (snd (snd cc)))
-                (tyden_cast (eq_trans (C_sub (sub1 s) Q)
-                               (eq_sym (C_sub (sub1 t) Q))) (snd (snd cc)))
+                (tyden_cast (eq_trans (C_sub (scons s) Q)
+                               (eq_sym (C_sub (scons t) Q))) (snd (snd cc)))
+                (tyden_cast (eq_trans (C_sub (scons s) Q)
+                               (eq_sym (C_sub (scons t) Q))) (snd (snd cc)))
                 Hρ (proj1 Hc) (EEq_cast _ _ _ (proj2 Hc)))) HBt) as HB2.
   rewrite tyden_cast_trans in HB2.
-  rewrite (ty_uip (eq_trans (eq_trans (C_sub (sub1 s) Q)
-                     (eq_sym (C_sub (sub1 t) Q))) (C_sub (sub1 t) Q))
-             (C_sub (sub1 s) Q)) in HB2.
+  rewrite (ty_uip (eq_trans (eq_trans (C_sub (scons s) Q)
+                     (eq_sym (C_sub (scons t) Q))) (C_sub (scons t) Q))
+             (C_sub (scons s) Q)) in HB2.
   assert (HfwW : EEq (W (psub1 Q s))
-      (tmden ((tcast (eq_trans (W_sub (sub1 t) Q) (eq_sym (W_sub (sub1 s) Q)))
+      (tmden ((tcast (eq_trans (W_sub (scons t) Q) (eq_sym (W_sub (scons s) Q)))
                  v0)
                 : tm (W (psub1 Q t) :: W (pEq t s) :: Γ) (W (psub1 Q s)))
          (fst (snd cc), (fst cc, ρ)))
-      (tyden_cast (eq_trans (W_sub (sub1 t) Q) (eq_sym (W_sub (sub1 s) Q)))
+      (tyden_cast (eq_trans (W_sub (scons t) Q) (eq_sym (W_sub (scons s) Q)))
          (fst (snd cc)))).
   { rewrite tmden_tcast; exact (EEq_cast _ _ _ (proj1 Hc)). }
   refine (eq_trans (dia_psub1 Q s ρ ρ
             (fst (fst (tmden (r_leibniz (Q := Q) t s) ρ) (fst cc))
                (fst (snd cc)))
-            (tyden_cast (eq_trans (W_sub (sub1 t) Q)
-                           (eq_sym (W_sub (sub1 s) Q))) (fst (snd cc)))
+            (tyden_cast (eq_trans (W_sub (scons t) Q)
+                           (eq_sym (W_sub (scons s) Q))) (fst (snd cc)))
             (snd (snd cc)) (snd (snd cc)) Hρ HfwW (proj2 Hc)) _).
   rewrite tyden_cast_trans.
-  rewrite (ty_uip (eq_trans (eq_trans (W_sub (sub1 t) Q)
-                     (eq_sym (W_sub (sub1 s) Q))) (W_sub (sub1 s) Q))
-             (W_sub (sub1 t) Q)).
+  rewrite (ty_uip (eq_trans (eq_trans (W_sub (scons t) Q)
+                     (eq_sym (W_sub (scons s) Q))) (W_sub (scons s) Q))
+             (W_sub (scons t) Q)).
   exact (eq_trans (eq_sym (f_equal (fun n => dia Q (n, ρ)
-            (tyden_cast (W_sub (sub1 t) Q) (fst (snd cc)))
-            (tyden_cast (C_sub (sub1 s) Q) (snd (snd cc)))) Heq)) HB2).
+            (tyden_cast (W_sub (scons t) Q) (fst (snd cc)))
+            (tyden_cast (C_sub (scons s) Q) (snd (snd cc)))) Heq)) HB2).
 Qed.
 
 Lemma Valid_r_all_intro : forall {Γ} {P : prp Γ} {Q : prp (tN :: Γ)}
@@ -1707,18 +1770,18 @@ Proof.
   | |- implb ?b _ = true => destruct b eqn:HA; [| reflexivity]
   end.
   assert (Eg : EEqE (tN :: Γ)
-      (subden (sub_at0 wkn2 ((tfst v0) : tm (C (pAll Q) :: W P :: Γ) tN))
+      (subden (sub_at0 (drop_prefix [_; _]) ((tfst v0) : tm (C (pAll Q) :: W P :: Γ) tN))
          (snd cc, (fst cc, ρ)))
       (fst (snd cc), ρ)).
-  { pose proof (subden_sub_at0 wkn2
+  { pose proof (subden_sub_at0 (drop_prefix [_; _])
                   ((tfst v0) : tm (C (pAll Q) :: W P :: Γ) tN)
                   (snd cc, (fst cc, ρ)) (snd cc, (fst cc, ρ))
                   (conj Hc (conj Hw Hρ))) as E2.
-    rewrite opeden_wkn2 in E2.
+    rewrite opeden_drop_prefix in E2.
     exact E2. }
   pose proof (EEq_trans _ _ _ _
                 (tmden_subst u
-                   (sub_at0 wkn2 ((tfst v0) : tm (C (pAll Q) :: W P :: Γ) tN))
+                   (sub_at0 (drop_prefix [_; _]) ((tfst v0) : tm (C (pAll Q) :: W P :: Γ) tN))
                    (snd cc, (fst cc, ρ)) (snd cc, (fst cc, ρ))
                    (conj Hc (conj Hw Hρ)))
                 (tmden_EEqE u _ _ Eg)) as Bg.
@@ -1735,7 +1798,7 @@ Proof.
       = true).
   { refine (eq_trans (eq_sym (dia_EEqE P ρ ρ (fst cc) (fst cc)
               (tmden ((tcast (C_ren wk P)
-                         (tsnd (subst (sub_at0 wkn2
+                         (tsnd (subst (sub_at0 (drop_prefix [_; _])
                                   ((tfst v0)
                                      : tm (C (pAll Q) :: W P :: Γ) tN)) u)
                             · tcast (eq_sym (W_ren wk P)) v1 · tsnd v0))
@@ -1776,17 +1839,17 @@ Proof.
             (snd cc) (snd cc) Hρ
             (proj1 (tmden_EEqE (r_all_intro u) ρ ρ Hρ) _ _ Hw) Hc) _).
   assert (Ef : EEqE (tN :: Γ)
-      (subden (sub_at0 wkn2 ((v0) : tm (tN :: W P :: Γ) tN))
+      (subden (sub_at0 (drop_prefix [_; _]) ((v0) : tm (tN :: W P :: Γ) tN))
          (fst (snd cc), (fst cc, ρ)))
       (fst (snd cc), ρ)).
-  { pose proof (subden_sub_at0 wkn2 ((v0) : tm (tN :: W P :: Γ) tN)
+  { pose proof (subden_sub_at0 (drop_prefix [_; _]) ((v0) : tm (tN :: W P :: Γ) tN)
                   (fst (snd cc), (fst cc, ρ)) (fst (snd cc), (fst cc, ρ))
                   (conj (proj1 Hc) (conj Hw Hρ))) as E4.
-    rewrite opeden_wkn2 in E4.
+    rewrite opeden_drop_prefix in E4.
     exact E4. }
   pose proof (EEq_trans _ _ _ _
                 (tmden_subst u
-                   (sub_at0 wkn2 ((v0) : tm (tN :: W P :: Γ) tN))
+                   (sub_at0 (drop_prefix [_; _]) ((v0) : tm (tN :: W P :: Γ) tN))
                    (fst (snd cc), (fst cc, ρ)) (fst (snd cc), (fst cc, ρ))
                    (conj (proj1 Hc) (conj Hw Hρ)))
                 (tmden_EEqE u _ _ Ef)) as Bf.
@@ -1815,18 +1878,18 @@ Proof.
   | |- implb ?b _ = true => destruct b eqn:HA; [| reflexivity]
   end.
   assert (Eg : EEqE (tN :: Γ)
-      (subden (sub_at0 wkn2 ((tfst v1) : tm (C P :: W (pEx Q) :: Γ) tN))
+      (subden (sub_at0 (drop_prefix [_; _]) ((tfst v1) : tm (C P :: W (pEx Q) :: Γ) tN))
          (snd cc, (fst cc, ρ)))
       (fst (fst cc), ρ)).
-  { pose proof (subden_sub_at0 wkn2
+  { pose proof (subden_sub_at0 (drop_prefix [_; _])
                   ((tfst v1) : tm (C P :: W (pEx Q) :: Γ) tN)
                   (snd cc, (fst cc, ρ)) (snd cc, (fst cc, ρ))
                   (conj Hc (conj Hw Hρ))) as E2.
-    rewrite opeden_wkn2 in E2.
+    rewrite opeden_drop_prefix in E2.
     exact E2. }
   pose proof (EEq_trans _ _ _ _
                 (tmden_subst u
-                   (sub_at0 wkn2 ((tfst v1) : tm (C P :: W (pEx Q) :: Γ) tN))
+                   (sub_at0 (drop_prefix [_; _]) ((tfst v1) : tm (C P :: W (pEx Q) :: Γ) tN))
                    (snd cc, (fst cc, ρ)) (snd cc, (fst cc, ρ))
                    (conj Hc (conj Hw Hρ)))
                 (tmden_EEqE u _ _ Eg)) as Bg.
@@ -1840,7 +1903,7 @@ Proof.
       (snd (tmden u (fst (fst cc), ρ)) (snd (fst cc))
          (tyden_cast (eq_sym (C_ren wk P)) (snd cc))) = true).
   { refine (eq_trans (eq_sym (dia_EEqE (pEx Q) ρ ρ (fst cc) (fst cc)
-              (tmden ((tsnd (subst (sub_at0 wkn2
+              (tmden ((tsnd (subst (sub_at0 (drop_prefix [_; _])
                           ((tfst v1) : tm (C P :: W (pEx Q) :: Γ) tN)) u)
                          · tsnd v1 · tcast (eq_sym (C_ren wk P)) v0)
                         : tm (C P :: W (pEx Q) :: Γ) (C (pEx Q)))

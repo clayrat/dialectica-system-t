@@ -77,7 +77,7 @@ Definition pwk {Γ S} (A : prp Γ) : prp (S :: Γ) := pren wk A.
 
 (** Instantiating the outermost quantified variable at a numeric term. *)
 Definition psub1 {Γ} (A : prp (tN :: Γ)) (t : tm Γ tN) : prp Γ :=
-  psub (sub1 t) A.
+  psub (scons t) A.
 
 (** [A(x)] ↦ [A(S x)] (via [sub_succ] from Terms.v): needed to state
     induction. *)

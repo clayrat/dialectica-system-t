@@ -62,7 +62,7 @@ cd ..
 Then compile this development in dependency order:
 
 ```sh
-for f in Terms Eval Semantics HA Dialectica Validity Realizer; do
+for f in Terms Semantics HA Dialectica Validity Realizer Examples; do
   ~/.opam/rocq-9.1/bin/rocq compile \
     -Q nbe-system-t/theories NbE \
     -Q theories SystemT \
@@ -78,14 +78,14 @@ with `rocq`, and the explicit `PATH` assignment can be omitted.
 
 | Path | Contents |
 | --- | --- |
-| `nbe-system-t/` | Git submodule providing the shared System T syntax, OPEs, substitution, normal forms, NbE, and its metatheory |
-| `theories/Terms.v` | Generic System T utilities, boolean programs, defaults, and natural-number equality |
-| `theories/Eval.v` | Set-theoretic evaluator for System T |
-| `theories/Semantics.v` | PER model, evaluator metatheory, and preservation of denotation under definitional equality |
+| `nbe-system-t/` | Git submodule providing System T syntax, OPEs, substitution, normal forms, NbE, canonicity, and the standard set model with its PER metatheory |
+| `theories/Terms.v` | Project System T utilities: notations, boolean connectives, addition, casts, and specialized substitutions |
+| `theories/Semantics.v` | Dialectica-specific set-model facts for casts and project-specific substitutions |
 | `theories/HA.v` | HA formulas, renaming/substitution, proof calculus, and derived rules |
-| `theories/Dialectica.v` | Witness/counter translation, internal matrix, proof extraction, validity, and examples |
-| `theories/Validity.v` | Axiom-free Dialectica soundness proof |
+| `theories/Dialectica.v` | Witness/counter translation, internal matrix program, and proof extraction |
+| `theories/Validity.v` | Denotational matrix, validity predicate, and axiom-free Dialectica soundness proof |
 | `theories/Realizer.v` | NbE normalization, validity transfer, and syntactic soundness |
+| `theories/Examples.v` | Example derivations and their evaluation, normalization, validity, and matrix checks |
 | `theories_old/` | Earlier semantic Rocq developments used as proof references |
 | `src_old/` | Earlier Agda and game-semantics experiments |
 | `PROGRESS.md` | Detailed design decisions, milestone status, and future work |

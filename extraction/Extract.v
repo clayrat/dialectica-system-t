@@ -32,7 +32,7 @@
     [nat] is mapped to native [int] below, purely for readable numerals. *)
 
 From NbE Require Import Syntax OPE NormalForms Model Subst.
-From SystemT Require Import Terms HA Dialectica Realizer.
+From SystemT Require Import Terms HA Dialectica Realizer Examples.
 From Stdlib Require Import List Extraction.
 Import ListNotations.
 
@@ -48,7 +48,7 @@ Open Scope ty_scope.
 Open Scope tm_scope.
 Open Scope prp_scope.
 
-(** The showcase derivations live in Dialectica.v / Realizer.v: [ex_two]
+(** The showcase derivations live in Examples.v: [ex_two]
     (∃-introduction), [ex_succ] (a ∀∃ program), [mp_ex] (Markov's
     principle), [plus0] (induction).  We export their *normalized*
     realizers as [nf] constants — thunks in the extracted code, so OCaml
