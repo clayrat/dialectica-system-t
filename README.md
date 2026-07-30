@@ -1,12 +1,15 @@
 # Dialectica interpretation into System T
 
 A syntactic formalization in Rocq of Gödel's Dialectica interpretation of
-Heyting arithmetic into Gödel's System T.
+Heyting arithmetic, extended with quantifier-free Markov's principle and
+universal-premise Independence of Premise, into Gödel's System T.
 
-HA formulas are represented with intrinsically typed, de Bruijn-indexed
-System T terms. A proof `d : proof Γ A` is translated to a System T witness
-`wit d : tm Γ (W A)`. The resulting program can then be normalized with the
-axiom-free normalization-by-evaluation development in the
+Arithmetic formulas are represented with intrinsically typed, de
+Bruijn-indexed System T terms. A derivation `d : proof Γ A` in the extended
+calculus is translated to a System T witness `wit d : tm Γ (W A)`. The
+ordinary HA derivations form its intuitionistic fragment. The resulting
+program can then be normalized with the axiom-free
+normalization-by-evaluation development in the
 [`nbe-system-t`](https://github.com/clayrat/nbe-system-t) submodule:
 
 ```coq
@@ -97,7 +100,12 @@ The development includes executable examples showing that:
 - a proof of `∃y. y = 2` extracts and normalizes to `(2, tt)`;
 - a proof of `∀x. ∃y. y = S x` extracts and normalizes to
   `λx. (S x, tt)`;
-- the induction realizer's backward counterexample search computes.
+- derivations through Markov's principle and Independence of Premise
+  normalize to their concrete existential witnesses;
+- the induction realizer's backward counterexample search computes;
+- a proof of `∀x. x + 0 = x` uses induction and Leibniz substitution,
+  exposes the residual induction skeleton in normal form, and has its
+  arithmetic matrix checked at `x = 5`.
 
 See `PROGRESS.md` for proof-design details, milestone history, and the
 relationship to the older reference developments.

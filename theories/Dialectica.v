@@ -1,8 +1,9 @@
-(** * Dialectica: Goedel's functional interpretation of HA into System T
+(** * Dialectica: functional interpretation of arithmetic into System T
 
     A "simple" (non-dependent) Dialectica translation of the Heyting
-    arithmetic of HA.v into the intrinsically typed System T shared with the
-    NbE development:
+    arithmetic fragment of HA.v, extended with its D3 characteristic
+    principles, into the intrinsically typed System T shared with the NbE
+    development:
 
     - Each formula [A] is assigned System T types [W A] (witnesses / player
       moves) and [C A] (counters / opponent moves).  Because formulas are
@@ -12,7 +13,8 @@
       with theories_old/intuitionistic.v, Bauer's version, where "exotic"
       propositional functions force dependent types.)
 
-    - Each HA proof [d : proof Γ A] is translated to a System T term
+    - Each derivation [d : proof Γ A] in the extended calculus is translated
+      to a System T term
       [wit d : tm Γ (W A)].  Since [tm] is intrinsically typed, type
       correctness of the extraction is enforced by construction.
 
@@ -36,7 +38,7 @@
       [forall d : proof Γ A, valid A (wit d)] is proved in Validity.v
       ([soundness]), axiom-free.  This file is the *translation*. *)
 
-From Stdlib Require Import List.
+From Stdlib Require Import List Bool.
 Import ListNotations.
 From NbE Require Import Syntax OPE Subst.
 From SystemT Require Import Terms Eval Semantics HA.
@@ -130,6 +132,31 @@ Definition W_sub {Δ Γ} (σ : sub Δ Γ) (A : prp Γ) : W (psub σ A) = W A :=
   fst (WC_psub A Δ σ).
 Definition C_sub {Δ Γ} (σ : sub Δ Γ) (A : prp Γ) : C (psub σ A) = C A :=
   snd (WC_psub A Δ σ).
+
+(** The trivial-move fragments of HA.v mean what their name says: they
+    guarantee PER-triviality of the corresponding move types. *)
+Lemma wtriv_ctriv_triv : forall {Γ} (A : prp Γ),
+    (wtriv A = true -> triv (W A) = true)
+    /\ (ctriv A = true -> triv (C A) = true).
+Proof.
+  induction A as
+    [ Γ b | Γ A1 IH1 A2 IH2 | Γ A1 IH1 A2 IH2 | Γ A1 IH1 A2 IH2
+    | Γ A1 IH1 | Γ A1 IH1 ]; simpl; split; intros H; try discriminate.
+  - reflexivity.
+  - reflexivity.
+  - apply andb_true_iff in H; destruct H as [H1 H2].
+    rewrite (proj1 IH1 H1), (proj1 IH2 H2); reflexivity.
+  - apply andb_true_iff in H; destruct H as [H1 H2].
+    rewrite (proj2 IH1 H1), (proj2 IH2 H2); reflexivity.
+  - apply andb_true_iff in H; destruct H as [H1 H2].
+    rewrite (proj2 IH1 H1), (proj2 IH2 H2); reflexivity.
+  - apply andb_true_iff in H; destruct H as [H1 H2].
+    rewrite (proj1 IH2 H2), (proj2 IH1 H1); reflexivity.
+  - apply andb_true_iff in H; destruct H as [H1 H2].
+    rewrite (proj1 IH1 H1), (proj2 IH2 H2); reflexivity.
+  - exact (proj1 IH1 H).
+  - exact (proj2 IH1 H).
+Qed.
 
 (** ** The matrix, internally
 
@@ -357,6 +384,48 @@ Definition r_ind {Γ} {Q : prp (tN :: Γ)} :
          (tfst v0))
        · tsnd v0))).
 
+(* Markov: from a witness h of ¬∀x.¬P(x), the counter-half of h applied to
+   the canonical [tdefault] ∀-family yields the existential index; the
+   existential's [W P]-component and the backward map are canonical moves —
+   witness/counter triviality of [P] (the side conditions on [ax_markov])
+   makes them as good as any.  (Bauer's [markov_generalized] realizer.) *)
+Definition r_markov {Γ} (P : prp (tN :: Γ)) :
+  tm Γ (W (pNot (pAll (pNot P)) ⊃ pEx P)) :=
+  tpair
+    (tlam (tpair
+       (tfst (tsnd v0 · tdefault (W (pAll (pNot P))) · tunit))
+       (tdefault (W P))))
+    (tlam (tlam (tpair (tdefault (W (pAll (pNot P)))) tunit))).
+
+(* Independence of Premise: from a witness a of (∀x.P(x)) ⊃ ∃y.Q(y), the
+   forward map of a at the canonical ∀-family yields the existential index
+   and (projected) the [Q]-witness; the inner backward map returns a's
+   counter at the canonical family (one [tcast], since [pwk] of a general
+   formula only computes up to the invariance lemmas); the outer backward
+   map threads the [Q]-counter through.  (Bauer's [ip_generalized]
+   realizer; no condition on [Q] is needed here because our [∃]-counters
+   are non-dependent.) *)
+Definition r_ip {Γ} (P Q : prp (tN :: Γ)) :
+  tm Γ (W ((pAll P ⊃ pEx Q) ⊃ pEx (pwk (pAll P) ⊃ Q))) :=
+  tpair
+    (tlam (tpair
+       (tfst (tfst v0 · tdefault (W (pAll P))))
+       (tpair
+          (tlam (tsnd (tfst v1 · tdefault (W (pAll P)))))
+          (tlam (tlam (tcast (eq_sym (C_ren wk (pAll P)))
+                         (tsnd v2 · tdefault (W (pAll P)) · v0)))))))
+    (tlam (tlam (tpair (tdefault (W (pAll P))) (tsnd v0)))).
+
+(** Atomic compatibility wrappers for the original D3 realizers. *)
+Definition r_markov_atomic {Γ} (b : tm (tN :: Γ) tBool) :
+    tm Γ (W (pNot (pAll (pNot (pAtom b))) ⊃ pEx (pAtom b))) :=
+  r_markov (pAtom b).
+
+Definition r_ip_atomic {Γ} (b b' : tm (tN :: Γ) tBool) :
+    tm Γ (W ((pAll (pAtom b) ⊃ pEx (pAtom b'))
+             ⊃ pEx (pwk (pAll (pAtom b)) ⊃ pAtom b'))) :=
+  r_ip (pAtom b) (pAtom b').
+
 (** ** The proof translation
 
     [wit d : tm Γ (W A)] dispatches each proof rule to its realizer
@@ -387,6 +456,9 @@ Fixpoint wit {Γ} {P : prp Γ} (d : proof Γ P) : tm Γ (W P) :=
   | ax_succ_nonzero _ => r_atom_imp
   | ax_succ_inj _ _ => r_atom_imp
   | @ax_ind _ _ => r_ind
+  | ax_conv _ d0 => wit d0
+  | ax_markov P _ _ => r_markov P
+  | ax_ip P Q _ => r_ip P Q
   end.
 
 (** ** Validity

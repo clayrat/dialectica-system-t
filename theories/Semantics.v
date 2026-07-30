@@ -35,7 +35,10 @@
     - facts about the equality program [teqb] (moved here from Eval.v and
       extended to [teqb_true_iff], needed for the Leibniz axiom in step 6);
     - [tmden_defeq]: βη-convertible terms have PER-related denotations, the
-      bridge used to transfer validity across NbE normalization in D2.5. *)
+      bridge used to transfer validity across NbE normalization in D2.5;
+    - [triv]: the PER-trivial types, whose inhabitants are all
+      interchangeable — the semantic side conditions of the D3
+      characteristic principles. *)
 
 From Stdlib Require Import List PeanoNat Eqdep_dec.
 Import ListNotations.
@@ -724,4 +727,30 @@ Proof.
   - (* trans *)
     exact (EEq_trans _ _ _ _ (IH1 ρ ρ' Hρ)
              (IH2 ρ' ρ' (EEqE_refl_r _ _ _ Hρ))).
+Qed.
+
+(** ** PER-trivial types (for the characteristic principles)
+
+    A type is PER-trivial when all its inhabitants are interchangeable
+    moves.  This is the semantic content of Bauer's [trivial_W]/[trivial_C]
+    side conditions — but where his singleton formulation cannot prove
+    arrows-into-singletons trivial without extensionality (his
+    [singleton_power] remark), the PER formulation handles them by a
+    one-line induction. *)
+
+Fixpoint triv (T : ty) : bool :=
+  match T with
+  | tbase bUnit => true
+  | tbase _ => false
+  | tarr _ T2 => triv T2
+  | tprod T1 T2 => triv T1 && triv T2
+  end.
+
+Lemma triv_EEq : forall T, triv T = true -> forall a b : tyden T, EEq T a b.
+Proof.
+  induction T as [b0 | T1 IH1 T2 IH2 | T1 IH1 T2 IH2]; simpl; intros H a b.
+  - destruct b0; [discriminate | destruct a, b; reflexivity | discriminate].
+  - intros x x' _; exact (IH2 H (a x) (b x')).
+  - destruct (triv T1) eqn:E1; [| discriminate].
+    split; [exact (IH1 eq_refl _ _) | exact (IH2 H _ _)].
 Qed.

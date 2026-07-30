@@ -1,10 +1,11 @@
-(** * HA: Heyting arithmetic over System T terms
+(** * HA and characteristic principles over System T terms
 
-    First-order intuitionistic arithmetic, independent of any interpretation:
+    First-order arithmetic syntax, independent of any interpretation:
     formulas, formula renaming/substitution, and a Hilbert-style proof
-    calculus.  Dialectica.v interprets this logic; other interpretations
-    (modified realizability, Diller–Nahm, a linear decomposition) would import
-    this same file.
+    calculus.  The calculus contains intuitionistic HA as a fragment and adds
+    quantifier-free Markov and universal-premise Independence of Premise in
+    D3.  Dialectica.v interprets the extended calculus; other interpretations
+    can reuse the syntax and select the fragment they support.
 
     ** Formulas
 
@@ -17,7 +18,7 @@
 
 From Stdlib Require Import List.
 Import ListNotations.
-From NbE Require Import Syntax OPE Subst.
+From NbE Require Import Syntax OPE Subst DefEq.
 From SystemT Require Import Terms.
 
 Open Scope ty_scope.
@@ -82,13 +83,45 @@ Definition psub1 {Γ} (A : prp (tN :: Γ)) (t : tm Γ tN) : prp Γ :=
     induction. *)
 Definition psucc {Γ} (A : prp (tN :: Γ)) : prp (tN :: Γ) := psub sub_succ A.
 
+(** ** Trivial-move fragments
+
+    Two syntactic fragments delimiting where the characteristic principles
+    below apply.  Read through the Dialectica lens (Dialectica.v proves the
+    bridge): [wtriv A] says all *witness* moves of [A] are interchangeable,
+    [ctriv A] the same for *counter* moves.  Both contain the atoms and are
+    closed under [∧] and [⊃]; in addition [wtriv] is closed under [∀] and
+    [ctriv] under [∨] and [∃].  In particular formulas built from atoms by
+    [∧], [⊃], [¬] are in both. *)
+
+Fixpoint wtriv {Γ} (A : prp Γ) : bool :=
+  match A with
+  | pAtom _ => true
+  | pAnd B D => wtriv B && wtriv D
+  | pOr _ _ => false
+  | pImp B D => ctriv B && wtriv D
+  | pAll B => wtriv B
+  | pEx _ => false
+  end
+with ctriv {Γ} (A : prp Γ) : bool :=
+  match A with
+  | pAtom _ => true
+  | pAnd B D => ctriv B && ctriv D
+  | pOr B D => ctriv B && ctriv D
+  | pImp B D => wtriv B && ctriv D
+  | pAll _ => false
+  | pEx B => ctriv B
+  end.
+
 (** ** Proofs
 
-    A Hilbert-style calculus for intuitionistic first-order arithmetic,
-    following the axiomatization Bauer verified semantically in
-    theories_old/intuitionistic.v (i.e. Avigad & Feferman's), plus the usual
-    HA axioms: equality, successor, induction.  Quantifier side conditions
-    ("x not free in ...") are expressed by explicit weakening [pwk]. *)
+    The base constructors give a Hilbert-style calculus for intuitionistic
+    first-order arithmetic, following the axiomatization Bauer verified
+    semantically in theories_old/intuitionistic.v (i.e. Avigad & Feferman's),
+    plus the usual HA axioms: equality, successor, induction, and a
+    conversion rule for atoms (the stand-in for defining axioms of function
+    symbols; see [ax_conv]).  Quantifier side conditions ("x not free in
+    ...") are expressed by explicit weakening [pwk].  The final two
+    constructors extend this HA fragment in D3. *)
 
 Inductive proof : forall Γ : cxt, prp Γ -> Type :=
 | ax_true : forall {Γ}, proof Γ pTrue
@@ -125,9 +158,54 @@ Inductive proof : forall Γ : cxt, prp Γ -> Type :=
 | ax_succ_inj : forall {Γ} (t s : tm Γ tN),
     proof Γ (pEq (tsuc t) (tsuc s) ⊃ pEq t s)
 | ax_ind : forall {Γ} {Q : prp (tN :: Γ)},
-    proof Γ ((psub1 Q tzero ∧ pAll (Q ⊃ psucc Q)) ⊃ pAll Q).
+    proof Γ ((psub1 Q tzero ∧ pAll (Q ⊃ psucc Q)) ⊃ pAll Q)
+
+(** Atomic conversion: provability of atoms is closed under βη-[defeq] of
+    the underlying boolean programs.  This is the counterpart of ordinary
+    HA's defining axioms for its function symbols (x + 0 = x, x + S y =
+    S (x + y), ...): here the function symbols are System T programs, so
+    all their defining equations are instances of one computation rule.
+    Without it, the only derivable equational atoms are the syntactically
+    reflexive ones. *)
+| ax_conv : forall {Γ} {b b' : tm Γ tBool},
+    defeq Γ tBool b b' -> proof Γ (pAtom b) -> proof Γ (pAtom b')
+
+(** *** The characteristic principles
+
+    Markov's principle and Independence of Premise — not intuitionistically
+    derivable, but validated by the Dialectica interpretation (cf. Bauer's
+    [markov_generalized]/[ip_generalized]).  The side conditions are the
+    trivial-move fragments above, matching his semantic triviality
+    hypotheses: MP needs both sides of its matrix trivial, so [P] ranges
+    over the ∨- and quantifier-free formulas — the ∨-free core of
+    Troelstra's quantifier-free MP (∨ is eliminable from decidable
+    matrices inside HA, but that prover-side step is not formalized
+    here); IP needs only witness-triviality of the premise family, which
+    is closed under [∀] — so this is IP with a [∀]-premise (IP_∀).
+    Notably IP needs *no* condition on [Q], a dividend of the
+    shape-uniform (non-dependent) [∃]-counters.  Atoms satisfy both
+    conditions by [eq_refl], recovering the previous atomic instances.
+    The calculus is thus HA + MP_qf (∨-free) + IP_∀, first-order over
+    ℕ. *)
+| ax_markov : forall {Γ} (P : prp (tN :: Γ)),
+    wtriv P = true -> ctriv P = true ->
+    proof Γ (pNot (pAll (pNot P)) ⊃ pEx P)
+| ax_ip : forall {Γ} (P Q : prp (tN :: Γ)),
+    wtriv P = true ->
+    proof Γ ((pAll P ⊃ pEx Q) ⊃ pEx (pwk (pAll P) ⊃ Q)).
 
 (** ** Derived rules *)
+
+(** Atomic compatibility helpers: the original D3 instances are immediate
+    because atoms belong to both trivial-move fragments definitionally. *)
+Definition ax_markov_atomic {Γ} (b : tm (tN :: Γ) tBool) :
+    proof Γ (pNot (pAll (pNot (pAtom b))) ⊃ pEx (pAtom b)) :=
+  ax_markov (pAtom b) eq_refl eq_refl.
+
+Definition ax_ip_atomic {Γ} (b b' : tm (tN :: Γ) tBool) :
+    proof Γ ((pAll (pAtom b) ⊃ pEx (pAtom b'))
+             ⊃ pEx (pwk (pAll (pAtom b)) ⊃ pAtom b')) :=
+  ax_ip (pAtom b) (pAtom b') eq_refl.
 
 Definition d_id {Γ} (P : prp Γ) : proof Γ (P ⊃ P) :=
   ax_chain ax_and_contr ax_and_eliml.
@@ -140,6 +218,25 @@ Definition d_or_inr {Γ} (P Q : prp Γ) : proof Γ (P ⊃ Q ∨ P) :=
 
 Definition d_and_elimr {Γ} (P Q : prp Γ) : proof Γ (P ∧ Q ⊃ Q) :=
   ax_chain ax_and_comm ax_and_eliml.
+
+(** Argument swap: [P ⊃ (Q ⊃ R)] entails [Q ⊃ (P ⊃ R)]. *)
+Definition d_swap {Γ} {P Q R : prp Γ} (u : proof Γ (P ⊃ (Q ⊃ R))) :
+  proof Γ (Q ⊃ (P ⊃ R)) :=
+  ax_cur (ax_chain ax_and_comm (ax_uncur u)).
+
+(** Double-negation introduction, generalized: from [⊢ P] conclude
+    [⊢ (P ⊃ Q) ⊃ Q] (take [Q := pFalse] for ¬¬-introduction proper). *)
+Definition d_dni {Γ} {P Q : prp Γ} (a : proof Γ P) :
+  proof Γ ((P ⊃ Q) ⊃ Q) :=
+  ax_mp (d_swap (d_id (P ⊃ Q))) a.
+
+(** ∧-introduction, curried and as a pairing of theorems. *)
+Definition d_and_intro {Γ} (P Q : prp Γ) : proof Γ (P ⊃ (Q ⊃ P ∧ Q)) :=
+  ax_cur (d_id (P ∧ Q)).
+
+Definition d_pair {Γ} {P Q : prp Γ}
+  (a : proof Γ P) (b : proof Γ Q) : proof Γ (P ∧ Q) :=
+  ax_mp (ax_mp (d_and_intro P Q) a) b.
 
 (** Generalization: from [⊢_{Γ,x} Q] conclude [⊢_Γ ∀x. Q]. *)
 Definition d_gen {Γ} {Q : prp (tN :: Γ)} (u : proof (tN :: Γ) Q) :

@@ -1,4 +1,4 @@
-(** * Validity: matrix semantics and realizer correctness (D2 steps 3, 5–7)
+(** * Validity: matrix semantics and realizer correctness
 
     Step 3 establishes the characterization of [dia] that the rest of the
     soundness proof works with — after this file, [diaT] never needs to be
@@ -31,16 +31,26 @@
     - quantifier introduction/elimination and Leibniz substitution, using the
       renaming and substitution characterizations established in step 3.
 
-    Step 7 assembles these lemmas by structural induction on HA derivations,
-    yielding [soundness] and its closed-formula specialization
-    [soundness_closed].
+    Step 7 assembles these lemmas by structural induction on derivations in
+    the HA fragment, including atomic conversion, yielding [soundness] and
+    its closed-formula specialization [soundness_closed].
+
+    D3 extends the source calculus with quantifier-free Markov and
+    universal-premise Independence of Premise.
+    [Valid_r_markov_generalized] and [Valid_r_ip_generalized] validate their
+    realizers; atomic compatibility corollaries recover the original
+    instances, and the same [soundness] theorem covers the extended calculus.
+
+    Atomic conversion, added with the D4 induction example, reuses the
+    underlying realizer and transports validity along definitional equality
+    via [tmden_defeq].
 
     Everything is stated over the PER domain (self-related or pairwise
     related values); unrestricted versions are not available axiom-free. *)
 
 From Stdlib Require Import List Bool.
 Import ListNotations.
-From NbE Require Import Syntax OPE Subst.
+From NbE Require Import Syntax OPE Subst DefEq.
 From SystemT Require Import Terms Eval Semantics HA Dialectica.
 
 Open Scope ty_scope.
@@ -1896,12 +1906,304 @@ Proof.
   exact (eq_trans (dia_EEqE P ρ ρ _ _ (snd cc) (snd cc) Hρ Hfw Hc) HPP).
 Qed.
 
+(** ** Atomic conversion
+
+    [ax_conv] reuses the underlying realizer, so validity only has to move
+    the matrix across [defeq] of the atoms — precisely [tmden_defeq], with
+    [EEq] at [tBool] being Leibniz equality. *)
+
+Lemma Valid_conv : forall {Γ} {b b' : tm Γ tBool},
+    defeq Γ tBool b b' ->
+    forall t : tm Γ (W (pAtom b)),
+    valid (pAtom b) t -> valid (pAtom b') t.
+Proof.
+  intros Γ b b' e t Hv ρ c Hρ Hc.
+  refine (eq_trans (dia_atom b' ρ ρ (tmden t ρ) c Hρ) _).
+  refine (eq_trans (eq_sym (tmden_defeq b b' e ρ ρ Hρ)) _).
+  refine (eq_trans (eq_sym (dia_atom b ρ ρ (tmden t ρ) c Hρ)) _).
+  exact (Hv ρ c Hρ Hc).
+Qed.
+
+(** ** D3: the characteristic principles
+
+    The syntactic [wtriv]/[ctriv] side conditions entail PER-triviality of the
+    corresponding move types. Markov uses both conditions; IP needs only
+    witness-triviality of its universal premise, while [Q] is unrestricted
+    because existential counters are non-dependent in this interpretation. *)
+
+Lemma Valid_r_markov_generalized : forall {Γ} (P : prp (tN :: Γ)),
+    wtriv P = true -> ctriv P = true ->
+    valid (pNot (pAll (pNot P)) ⊃ pEx P) (r_markov P).
+Proof.
+  intros Γ P HwP HcP ρ cc Hρ Hcc.
+  pose proof (proj1 (wtriv_ctriv_triv P) HwP) as HWt.
+  pose proof (proj2 (wtriv_ctriv_triv P) HcP) as HCt.
+  pose proof (proj1 Hcc) as Hw; pose proof (proj2 Hcc) as Hc.
+  refine (eq_trans (dia_imp (pNot (pAll (pNot P))) (pEx P)
+            ρ ρ _ _ cc cc Hρ (tmden_EEqE (r_markov P) ρ ρ Hρ) Hcc) _).
+  match goal with
+  | |- implb ?bb _ = true => destruct bb eqn:HA; [| reflexivity]
+  end.
+  set (U := tmden (Γ := C (pEx P) :: W (pNot (pAll (pNot P))) :: Γ)
+              (tdefault (W (pAll (pNot P))))
+              (snd cc, (fst cc, ρ))).
+  set (V := tmden (Γ := W (pNot (pAll (pNot P))) :: Γ)
+              (tdefault (W (pAll (pNot P)))) (fst cc, ρ)).
+  assert (BU : EEq (W (pAll (pNot P))) U U).
+  { exact (EEq_refl_l _ _ _
+      (tmden_tdefault (W (pAll (pNot P)))
+         (Γ := C (pEx P) :: W (pNot (pAll (pNot P))) :: Γ)
+         (snd cc, (fst cc, ρ)))). }
+  assert (BVU : EEq (W (pAll (pNot P))) V U).
+  { exact (EEq_trans _ _ _ _
+      (tmden_tdefault (W (pAll (pNot P)))
+         (Γ := W (pNot (pAll (pNot P))) :: Γ) (fst cc, ρ))
+      (EEq_sym _ _ _
+        (tmden_tdefault (W (pAll (pNot P)))
+           (Γ := C (pEx P) :: W (pNot (pAll (pNot P))) :: Γ)
+           (snd cc, (fst cc, ρ))))). }
+  pose proof (eq_trans (eq_sym (dia_imp (pAll (pNot P)) pFalse ρ ρ
+                (fst cc) (fst cc) (U, tt) (U, tt)
+                Hρ Hw (conj BU eq_refl))) HA) as H1.
+  cbn [fst snd] in H1.
+  pose proof (eq_trans (eq_sym (f_equal
+                (implb (dia (pAll (pNot P)) ρ U (snd (fst cc) U tt)))
+                (dia_atom tfalse ρ ρ (fst (fst cc) U) tt Hρ))) H1) as H2.
+  pose proof (proj1 (negb_true_iff _)
+                (eq_trans (eq_sym (implb_false_r _)) H2)) as H3.
+  pose proof (eq_trans (eq_sym (dia_all (pNot P) ρ ρ U U
+                (snd (fst cc) U tt) (snd (fst cc) U tt)
+                Hρ BU (proj2 Hw _ _ BU _ _ eq_refl))) H3) as H4.
+  pose proof (eq_trans (eq_sym (dia_imp P pFalse
+                (fst (snd (fst cc) U tt), ρ) (fst (snd (fst cc) U tt), ρ)
+                (U (fst (snd (fst cc) U tt))) (U (fst (snd (fst cc) U tt)))
+                (snd (snd (fst cc) U tt)) (snd (snd (fst cc) U tt))
+                (conj eq_refl Hρ) (BU _ _ eq_refl)
+                (proj2 (proj2 Hw _ _ BU _ _ eq_refl)))) H4) as H5.
+  pose proof (eq_trans (eq_sym (f_equal
+                (implb (dia P (fst (snd (fst cc) U tt), ρ)
+                          (fst (snd (snd (fst cc) U tt)))
+                          (snd (U (fst (snd (fst cc) U tt)))
+                             (fst (snd (snd (fst cc) U tt)))
+                             (snd (snd (snd (fst cc) U tt))))))
+                (dia_atom (Γ := tN :: Γ) tfalse
+                   (fst (snd (fst cc) U tt), ρ)
+                   (fst (snd (fst cc) U tt), ρ) _ _ (conj eq_refl Hρ))))
+                H5) as H6.
+  pose proof (proj1 (negb_false_iff _)
+                (eq_trans (eq_sym (implb_false_r _)) H6)) as H7.
+  refine (eq_trans (dia_ex P ρ ρ
+            (fst (tmden (r_markov P) ρ) (fst cc))
+            (fst (tmden (r_markov P) ρ) (fst cc))
+            (snd cc) (snd cc) Hρ
+            (proj1 (tmden_EEqE (r_markov P) ρ ρ Hρ) _ _ Hw) Hc) _).
+  refine (eq_trans (dia_EEqE P
+            (fst (fst (tmden (r_markov P) ρ) (fst cc)), ρ)
+            (fst (snd (fst cc) U tt), ρ)
+            (snd (fst (tmden (r_markov P) ρ) (fst cc)))
+            (fst (snd (snd (fst cc) U tt)))
+            (snd cc)
+            (snd (U (fst (snd (fst cc) U tt)))
+               (fst (snd (snd (fst cc) U tt)))
+               (snd (snd (snd (fst cc) U tt))))
+            (conj (proj1 (proj2 Hw _ _ BVU _ _ (@eq_refl unit tt))) Hρ)
+            (triv_EEq (W P) HWt _ _)
+            (triv_EEq (C P) HCt _ _)) _).
+  exact H7.
+Qed.
+
+Corollary Valid_r_markov_atomic : forall {Γ} (b : tm (tN :: Γ) tBool),
+    valid (pNot (pAll (pNot (pAtom b))) ⊃ pEx (pAtom b))
+          (r_markov_atomic b).
+Proof.
+  intros Γ b; apply Valid_r_markov_generalized; reflexivity.
+Qed.
+
+Lemma Valid_r_ip_generalized : forall {Γ} (P Q : prp (tN :: Γ)),
+    wtriv P = true ->
+    valid ((pAll P ⊃ pEx Q) ⊃ pEx (pwk (S := tN) (pAll P) ⊃ Q)) (r_ip P Q).
+Proof.
+  intros Γ P Q HwP ρ cc Hρ Hcc.
+  pose proof (proj1 (wtriv_ctriv_triv P) HwP) as HWt.
+  pose proof (proj1 Hcc) as Hw; pose proof (proj2 Hcc) as Hc.
+  refine (eq_trans (dia_imp (pAll P ⊃ pEx Q)
+            (pEx (pwk (S := tN) (pAll P) ⊃ Q))
+            ρ ρ _ _ cc cc Hρ (tmden_EEqE (r_ip P Q) ρ ρ Hρ) Hcc) _).
+  match goal with
+  | |- implb ?bb _ = true => destruct bb eqn:HA; [| reflexivity]
+  end.
+  set (U := tmden (Γ := C (pEx (pwk (S := tN) (pAll P) ⊃ Q))
+                        :: W (pAll P ⊃ pEx Q) :: Γ)
+              (tdefault (W (pAll P))) (snd cc, (fst cc, ρ))).
+  set (V := tmden (Γ := W (pAll P ⊃ pEx Q) :: Γ)
+              (tdefault (W (pAll P))) (fst cc, ρ)).
+  set (Vf := tmden (Γ := W (pwk (S := tN) (pAll P))
+                         :: W (pAll P ⊃ pEx Q) :: Γ)
+               (tdefault (W (pAll P))) (fst (snd cc), (fst cc, ρ))).
+  set (Wg := tmden (Γ := C Q :: W (pwk (S := tN) (pAll P))
+                         :: W (pAll P ⊃ pEx Q) :: Γ)
+               (tdefault (W (pAll P)))
+               (snd (snd cc), (fst (snd cc), (fst cc, ρ)))).
+  assert (BU : EEq (W (pAll P)) U U).
+  { exact (EEq_refl_l _ _ _ (tmden_tdefault (W (pAll P))
+      (Γ := C (pEx (pwk (S := tN) (pAll P) ⊃ Q))
+            :: W (pAll P ⊃ pEx Q) :: Γ)
+      (snd cc, (fst cc, ρ)))). }
+  assert (BVU : EEq (W (pAll P)) V U).
+  { exact (EEq_trans _ _ _ _
+      (tmden_tdefault (W (pAll P))
+         (Γ := W (pAll P ⊃ pEx Q) :: Γ) (fst cc, ρ))
+      (EEq_sym _ _ _ (tmden_tdefault (W (pAll P))
+         (Γ := C (pEx (pwk (S := tN) (pAll P) ⊃ Q))
+               :: W (pAll P ⊃ pEx Q) :: Γ)
+         (snd cc, (fst cc, ρ))))). }
+  assert (BVfU : EEq (W (pAll P)) Vf U).
+  { exact (EEq_trans _ _ _ _
+      (tmden_tdefault (W (pAll P))
+         (Γ := W (pwk (S := tN) (pAll P)) :: W (pAll P ⊃ pEx Q) :: Γ)
+         (fst (snd cc), (fst cc, ρ)))
+      (EEq_sym _ _ _ (tmden_tdefault (W (pAll P))
+         (Γ := C (pEx (pwk (S := tN) (pAll P) ⊃ Q))
+               :: W (pAll P ⊃ pEx Q) :: Γ)
+         (snd cc, (fst cc, ρ))))). }
+  assert (BWU : EEq (W (pAll P)) Wg U).
+  { exact (EEq_trans _ _ _ _
+      (tmden_tdefault (W (pAll P))
+         (Γ := C Q :: W (pwk (S := tN) (pAll P))
+               :: W (pAll P ⊃ pEx Q) :: Γ)
+         (snd (snd cc), (fst (snd cc), (fst cc, ρ))))
+      (EEq_sym _ _ _ (tmden_tdefault (W (pAll P))
+         (Γ := C (pEx (pwk (S := tN) (pAll P) ⊃ Q))
+               :: W (pAll P ⊃ pEx Q) :: Γ)
+         (snd cc, (fst cc, ρ))))). }
+  pose proof (eq_trans (eq_sym (dia_imp (pAll P) (pEx Q)
+                ρ ρ (fst cc) (fst cc)
+                (U, snd (snd cc)) (U, snd (snd cc))
+                Hρ Hw (conj BU (proj2 Hc)))) HA) as H1.
+  cbn [fst snd] in H1.
+  refine (eq_trans (dia_ex (pwk (S := tN) (pAll P) ⊃ Q) ρ ρ
+            (fst (tmden (r_ip P Q) ρ) (fst cc))
+            (fst (tmden (r_ip P Q) ρ) (fst cc))
+            (snd cc) (snd cc) Hρ
+            (proj1 (tmden_EEqE (r_ip P Q) ρ ρ Hρ) _ _ Hw) Hc) _).
+  refine (eq_trans (dia_imp (pwk (S := tN) (pAll P)) Q
+            (fst (fst (tmden (r_ip P Q) ρ) (fst cc)), ρ)
+            (fst (fst (tmden (r_ip P Q) ρ) (fst cc)), ρ)
+            (snd (fst (tmden (r_ip P Q) ρ) (fst cc)))
+            (snd (fst (tmden (r_ip P Q) ρ) (fst cc)))
+            (snd cc) (snd cc)
+            (conj eq_refl Hρ)
+            (proj2 (proj1 (tmden_EEqE (r_ip P Q) ρ ρ Hρ) _ _ Hw))
+            Hc) _).
+  match goal with
+  | |- implb ?bb _ = true => destruct bb eqn:HB; [| reflexivity]
+  end.
+  destruct (dia (pAll P) ρ U (snd (fst cc) U (snd (snd cc)))) eqn:HP.
+  - (* the universal held at the canonical family: use the ∃ from H1 *)
+    pose proof (implb_true_elim _ _ H1 eq_refl) as H2.
+    pose proof (eq_trans (eq_sym (dia_ex Q ρ ρ
+                  (fst (fst cc) U) (fst (fst cc) U)
+                  (snd (snd cc)) (snd (snd cc))
+                  Hρ (proj1 Hw _ _ BU) (proj2 Hc))) H2) as H3.
+    refine (eq_trans (dia_EEqE Q
+              (fst (fst (tmden (r_ip P Q) ρ) (fst cc)), ρ)
+              (fst (fst (fst cc) U), ρ)
+              (fst (snd (fst (tmden (r_ip P Q) ρ) (fst cc))) (fst (snd cc)))
+              (snd (fst (fst cc) U))
+              (snd (snd cc)) (snd (snd cc))
+              (conj (proj1 (proj1 Hw _ _ BVU)) Hρ)
+              (proj2 (proj1 Hw _ _ BVfU))
+              (proj2 Hc)) _).
+    exact H3.
+  - (* it failed — but the goal's antecedent HB says it holds: contradict *)
+    exfalso.
+    pose proof (dia_pren (pAll P) (wk (S := tN))
+                  (fst (fst (tmden (r_ip P Q) ρ) (fst cc)), ρ)
+                  (fst (fst (tmden (r_ip P Q) ρ) (fst cc)), ρ)
+                  (fst (snd cc)) (fst (snd cc))
+                  (snd (snd (fst (tmden (r_ip P Q) ρ) (fst cc)))
+                     (fst (snd cc)) (snd (snd cc)))
+                  (snd (snd (fst (tmden (r_ip P Q) ρ) (fst cc)))
+                     (fst (snd cc)) (snd (snd cc)))
+                  (conj eq_refl Hρ) (proj1 Hc)
+                  (proj2 (proj2 (proj1 (tmden_EEqE (r_ip P Q) ρ ρ Hρ)
+                             _ _ Hw)) _ _ (proj1 Hc) _ _ (proj2 Hc)))
+      as E5.
+    pose proof (eq_trans (eq_sym E5) HB) as H5.
+    pose proof (eq_trans (eq_sym (f_equal
+                  (fun e => dia (pAll P) e
+                     (tyden_cast (W_ren (wk (S := tN)) (pAll P))
+                        (fst (snd cc)))
+                     (tyden_cast (C_ren (wk (S := tN)) (pAll P))
+                        (snd (snd (fst (tmden (r_ip P Q) ρ) (fst cc)))
+                           (fst (snd cc)) (snd (snd cc)))))
+                  (opeden_wk (S := tN)
+                     (fst (fst (tmden (r_ip P Q) ρ) (fst cc)), ρ))))
+                H5) as H6.
+    pose proof (f_equal (fun k => dia (pAll P) ρ
+                   (tyden_cast (W_ren (wk (S := tN)) (pAll P))
+                      (fst (snd cc)))
+                   k)
+                  (eq_trans
+                     (f_equal (tyden_cast (C_ren (wk (S := tN)) (pAll P)))
+                        (tmden_tcast (eq_sym (C_ren (wk (S := tN)) (pAll P)))
+                           ((tsnd v2 · tdefault (W (pAll P)) · v0)
+                              : tm (C Q :: W (pwk (S := tN) (pAll P))
+                                    :: W (pAll P ⊃ pEx Q) :: Γ) (C (pAll P)))
+                           (snd (snd cc), (fst (snd cc), (fst cc, ρ)))))
+                     (tyden_cast_cancel_sym
+                        (C_ren (wk (S := tN)) (pAll P))
+                        (tmden ((tsnd v2 · tdefault (W (pAll P)) · v0)
+                                  : tm (C Q :: W (pwk (S := tN) (pAll P))
+                                        :: W (pAll P ⊃ pEx Q) :: Γ)
+                                       (C (pAll P)))
+                           (snd (snd cc), (fst (snd cc), (fst cc, ρ)))))))
+      as CE.
+    pose proof (eq_trans (eq_sym CE) H6) as H7.
+    pose proof (eq_trans (eq_sym (dia_all P ρ ρ
+                  (tyden_cast (W_ren (wk (S := tN)) (pAll P)) (fst (snd cc)))
+                  (tyden_cast (W_ren (wk (S := tN)) (pAll P)) (fst (snd cc)))
+                  (snd (fst cc) Wg (snd (snd cc)))
+                  (snd (fst cc) Wg (snd (snd cc)))
+                  Hρ
+                  (EEq_cast (W_ren (wk (S := tN)) (pAll P))
+                     (fst (snd cc)) (fst (snd cc)) (proj1 Hc))
+                  (proj2 Hw _ _ (EEq_refl_l _ _ _ BWU) _ _ (proj2 Hc))))
+                H7) as H8.
+    pose proof (eq_trans (eq_sym (dia_all P ρ ρ U U
+                  (snd (fst cc) U (snd (snd cc)))
+                  (snd (fst cc) U (snd (snd cc)))
+                  Hρ BU (proj2 Hw _ _ BU _ _ (proj2 Hc)))) HP) as H9.
+    pose proof (proj2 Hw _ _ BWU _ _ (proj2 Hc)) as Hbwd.
+    pose proof (eq_trans (eq_sym (dia_EEqE P
+                  (fst (snd (fst cc) Wg (snd (snd cc))), ρ)
+                  (fst (snd (fst cc) U (snd (snd cc))), ρ)
+                  (tyden_cast (W_ren (wk (S := tN)) (pAll P)) (fst (snd cc))
+                     (fst (snd (fst cc) Wg (snd (snd cc)))))
+                  (U (fst (snd (fst cc) U (snd (snd cc)))))
+                  (snd (snd (fst cc) Wg (snd (snd cc))))
+                  (snd (snd (fst cc) U (snd (snd cc))))
+                  (conj (proj1 Hbwd) Hρ)
+                  (triv_EEq (W P) HWt _ _)
+                  (proj2 Hbwd))) H8) as H10.
+    pose proof (eq_trans (eq_sym H10) H9) as H11.
+    discriminate H11.
+Qed.
+
+Corollary Valid_r_ip_atomic : forall {Γ} (b b' : tm (tN :: Γ) tBool),
+    valid ((pAll (pAtom b) ⊃ pEx (pAtom b'))
+           ⊃ pEx (pwk (S := tN) (pAll (pAtom b)) ⊃ pAtom b'))
+          (r_ip_atomic b b').
+Proof.
+  intros Γ b b'; apply Valid_r_ip_generalized; reflexivity.
+Qed.
+
 (** ** D2 step 7: soundness of the Dialectica interpretation
 
-    Every HA theorem's extracted realizer wins its Dialectica game: a
-    structural induction on the derivation, each case dispatching to the
-    validity lemma of its combinator (which applies to [wit] definitionally,
-    thanks to the step-4 refactor). *)
+    Every derivation in the extended calculus has an extracted realizer that
+    wins its Dialectica game: a structural induction on the derivation, each
+    case dispatching to the validity lemma of its combinator (which applies to
+    [wit] definitionally, thanks to the step-4 refactor). *)
 
 Theorem soundness : forall {Γ} {A : prp Γ} (d : proof Γ A), valid A (wit d).
 Proof.
@@ -1927,7 +2229,10 @@ Proof.
     | Γ Q t s
     | Γ t
     | Γ t s
-    | Γ Q ].
+    | Γ Q
+    | Γ b b' e d IHd
+    | Γ P Hwt Hct
+    | Γ P Q Hwt ].
   - exact Valid_tunit_true.
   - exact (Valid_r_mp (wit u) (wit a) IHu IHa).
   - exact (Valid_r_chain (wit u) (wit v) IHu IHv).
@@ -1950,6 +2255,9 @@ Proof.
   - exact (Valid_succ_nonzero t).
   - exact (Valid_succ_inj t s).
   - exact (Valid_r_ind Q).
+  - exact (Valid_conv e _ IHd).
+  - exact (Valid_r_markov_generalized P Hwt Hct).
+  - exact (Valid_r_ip_generalized P Q Hwt).
 Qed.
 
 (** For closed formulas the environment premise is trivial. *)

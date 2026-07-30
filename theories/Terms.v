@@ -106,6 +106,12 @@ Fixpoint tdefault {Γ} (T : ty) : tm Γ T :=
   | tprod T1 T2 => tpair (tdefault T1) (tdefault T2)
   end.
 
+(** ** Addition as a System T program, recursing on the *first* argument:
+    [plus = λm n. rec n (λm' r. S r) m].  (So [0 + n] computes but [m + 0]
+    does not — [∀x. x + 0 = x] genuinely needs induction.) *)
+Definition tplus {Γ} : tm Γ (tN ⇒ tN ⇒ tN) :=
+  tlam (tlam (trec v0 (tlam (tlam (tsuc v0))) v1)).
+
 (** ** Decidable equality of naturals, as a System T program:
     [eqb = λm. rec iszero (λm' r. λn. rec false (λn' _. r n') n) m]. *)
 Definition tiszero {Γ} : tm Γ (tN ⇒ tBool) :=
