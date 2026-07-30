@@ -14,14 +14,16 @@ Definition realizer {Γ} {A : prp Γ} (d : proof Γ A) : nf Γ (W A) :=
   norm (wit d).
 ```
 
-The translation and normal-form extraction pipeline are implemented. The
-general Dialectica soundness theorem,
+The translation, soundness proof, and normal-form extraction pipeline are
+implemented. In particular, the development proves
 
 ```coq
 forall Γ (A : prp Γ) (d : proof Γ A), valid A (wit d)
 ```
 
-is the next major milestone.
+and transfers validity to the normalized realizer `nf_emb (realizer d)`.
+For closed formulas it also proves that the internal Dialectica matrix
+normalizes to `true` against every closed syntactic counter.
 
 ## Requirements
 
@@ -57,7 +59,7 @@ cd ..
 Then compile this development in dependency order:
 
 ```sh
-for f in Terms Eval HA Dialectica Realizer; do
+for f in Terms Eval Semantics HA Dialectica Validity Realizer; do
   ~/.opam/rocq-9.1/bin/rocq compile \
     -Q nbe-system-t/theories NbE \
     -Q theories SystemT \
@@ -76,9 +78,11 @@ with `rocq`, and the explicit `PATH` assignment can be omitted.
 | `nbe-system-t/` | Git submodule providing the shared System T syntax, OPEs, substitution, normal forms, NbE, and its metatheory |
 | `theories/Terms.v` | Generic System T utilities, boolean programs, defaults, and natural-number equality |
 | `theories/Eval.v` | Set-theoretic evaluator for System T |
+| `theories/Semantics.v` | PER model, evaluator metatheory, and preservation of denotation under definitional equality |
 | `theories/HA.v` | HA formulas, renaming/substitution, proof calculus, and derived rules |
 | `theories/Dialectica.v` | Witness/counter translation, internal matrix, proof extraction, validity, and examples |
-| `theories/Realizer.v` | Composition of Dialectica extraction with NbE normalization |
+| `theories/Validity.v` | Axiom-free Dialectica soundness proof |
+| `theories/Realizer.v` | NbE normalization, validity transfer, and syntactic soundness |
 | `theories_old/` | Earlier semantic Rocq developments used as proof references |
 | `src_old/` | Earlier Agda and game-semantics experiments |
 | `PROGRESS.md` | Detailed design decisions, milestone status, and future work |
@@ -95,5 +99,5 @@ The development includes executable examples showing that:
   `λx. (S x, tt)`;
 - the induction realizer's backward counterexample search computes.
 
-See `PROGRESS.md` for the soundness plan and the relationship to the older
-reference developments.
+See `PROGRESS.md` for proof-design details, milestone history, and the
+relationship to the older reference developments.

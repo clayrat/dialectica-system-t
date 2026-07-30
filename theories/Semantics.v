@@ -1,8 +1,8 @@
 (** * Semantics: evaluator infrastructure for the set/PER model
 
-    Infrastructure used by D2 steps 1-3, 5, and 6, layered over Eval.v (which
-    stays definitions-only, mirroring the upstream split Model.v vs
-    Soundness.v).
+    Infrastructure used by D2 steps 1-3, 5, and 6 and D2.5 step 4, layered
+    over Eval.v (which stays definitions-only, mirroring the upstream split
+    Model.v vs Soundness.v).
 
     The central design decision (PROGRESS.md, D2 step 0): we stay *axiom-free*,
     like the NbE development, by working with an extensional partial
@@ -33,11 +33,13 @@
     - canonical semantic defaults and their correspondence with [tdefault],
       used by the induction search;
     - facts about the equality program [teqb] (moved here from Eval.v and
-      extended to [teqb_true_iff], needed for the Leibniz axiom in step 6). *)
+      extended to [teqb_true_iff], needed for the Leibniz axiom in step 6);
+    - [tmden_defeq]: βη-convertible terms have PER-related denotations, the
+      bridge used to transfer validity across NbE normalization in D2.5. *)
 
 From Stdlib Require Import List PeanoNat Eqdep_dec.
 Import ListNotations.
-From NbE Require Import Syntax OPE Subst.
+From NbE Require Import Syntax OPE Subst DefEq.
 From SystemT Require Import Terms Eval.
 
 Open Scope ty_scope.
@@ -592,3 +594,134 @@ Proof. intros T U V e1 e2 v; destruct e1, e2; reflexivity. Qed.
 
 Lemma implb_true_elim : forall a b : bool, implb a b = true -> a = true -> b = true.
 Proof. intros a b H Ha; rewrite Ha in H; exact H. Qed.
+
+(** ** D2.5 step 4: evaluation respects definitional equality
+
+    The bridge between the NbE metatheory and the set model: βη-convertible
+    terms have PER-related denotations.  Stated observationally, as always —
+    the η-rules make the Leibniz version funext-dependent. *)
+
+Lemma natrec_EEq : forall (T : ty) (z z' : tyden T)
+                          (s s' : tyden (tN ⇒ T ⇒ T)) (n n' : nat),
+    EEq T z z' -> EEq (tN ⇒ T ⇒ T) s s' -> n = n' ->
+    EEq T (nat_rect (fun _ => tyden T) z (fun k r => s k r) n)
+          (nat_rect (fun _ => tyden T) z' (fun k r => s' k r) n').
+Proof.
+  intros T z z' s s' n n' Hz Hs Hn; subst n'.
+  induction n as [| k IH]; simpl.
+  - exact Hz.
+  - exact (Hs k k eq_refl _ _ IH).
+Qed.
+
+Lemma if_EEq : forall (T : ty) (b b' : bool) (x x' y y' : tyden T),
+    b = b' -> EEq T x x' -> EEq T y y' ->
+    EEq T (if b then x else y) (if b' then x' else y').
+Proof.
+  intros T b b' x x' y y' Hb Hx Hy; subst b'.
+  destruct b; assumption.
+Qed.
+
+(** β-substitution semantically: substituting the head variable is
+    environment extension by the substituted term's value. *)
+Lemma tmden_subst1 : forall {Γ S T} (t : tm (S :: Γ) T) (s : tm Γ S)
+                            (ρ ρ' : cxtden Γ),
+    EEqE Γ ρ ρ' ->
+    EEq T (tmden (subst1 t s) ρ) (tmden t (tmden s ρ', ρ')).
+Proof.
+  intros Γ S T t s ρ ρ' Hρ.
+  eapply EEq_trans.
+  - exact (tmden_subst t _ ρ ρ' Hρ).
+  - apply tmden_EEqE.
+    eapply EEqE_trans.
+    + apply (subden_entrywise _ (sub1 s)).
+      apply (var_cons_case S Γ
+               (fun U x =>
+                  EEq U (tmden ((fun U0 (x0 : var (S :: Γ) U0) =>
+                            (match x0 in var G U'
+                                   return tm (tl G) (hd S G) -> tm (tl G) U'
+                             with
+                             | vz => fun s0 => s0
+                             | vs y => fun _ => tvar y
+                             end) s) U x) ρ')
+                        (tmden (sub1 s U x) ρ'))).
+      * exact (tmden_EEqE s ρ' ρ' (EEqE_refl_r _ _ _ Hρ)).
+      * intros U y.
+        exact (varden_EEqE y ρ' ρ' (EEqE_refl_r _ _ _ Hρ)).
+    + exact (subden_sub1 s ρ' ρ' (EEqE_refl_r _ _ _ Hρ)).
+Qed.
+
+(** The bridge, by induction on the derivation. *)
+Lemma tmden_defeq : forall {Γ T} (t t' : tm Γ T),
+    defeq Γ T t t' ->
+    forall (ρ ρ' : cxtden Γ), EEqE Γ ρ ρ' ->
+    EEq T (tmden t ρ) (tmden t' ρ').
+Proof.
+  intros Γ T t t' Hd; induction Hd as
+    [ Γ S T t s
+    | Γ T z s
+    | Γ T z s n
+    | Γ T t f
+    | Γ T t f
+    | Γ S T a b
+    | Γ S T a b
+    | Γ S T t
+    | Γ S T t
+    | Γ S T t t' Hd IH
+    | Γ S T r r' s s' Hd1 IH1 Hd2 IH2
+    | Γ n n' Hd IH
+    | Γ T z z' s s' n n' Hdz IHz Hds IHs Hdn IHn
+    | Γ T c c' t t' f f' Hdc IHc Hdt IHt Hdf IHf
+    | Γ S T a a' b b' Hda IHa Hdb IHb
+    | Γ S T t t' Hd IH
+    | Γ S T t t' Hd IH
+    | Γ T t
+    | Γ T t t' Hd IH
+    | Γ T t1 t2 t3 Hd1 IH1 Hd2 IH2 ];
+    intros ρ ρ' Hρ.
+  - (* β *)
+    exact (EEq_sym _ _ _ (tmden_subst1 t s ρ' ρ (EEqE_sym _ _ _ Hρ))).
+  - (* rec zero *)
+    exact (tmden_EEqE z ρ ρ' Hρ).
+  - (* rec suc: both sides converge by ι *)
+    exact (tmden_EEqE (tapp (tapp s n) (trec z s n)) ρ ρ' Hρ).
+  - (* if true *)
+    exact (tmden_EEqE t ρ ρ' Hρ).
+  - (* if false *)
+    exact (tmden_EEqE f ρ ρ' Hρ).
+  - (* fst pair *)
+    exact (tmden_EEqE a ρ ρ' Hρ).
+  - (* snd pair *)
+    exact (tmden_EEqE b ρ ρ' Hρ).
+  - (* η *)
+    intros a a' Ha.
+    exact (tmden_wk1_EEq t a a' ρ ρ' Ha Hρ _ _ Ha).
+  - (* pair η *)
+    exact (conj (proj1 (tmden_EEqE t ρ ρ' Hρ))
+                (proj2 (tmden_EEqE t ρ ρ' Hρ))).
+  - (* λ congruence *)
+    intros a a' Ha.
+    exact (IH (a, ρ) (a', ρ') (conj Ha Hρ)).
+  - (* app congruence *)
+    exact (IH1 ρ ρ' Hρ _ _ (IH2 ρ ρ' Hρ)).
+  - (* suc congruence *)
+    exact (f_equal S (IH ρ ρ' Hρ)).
+  - (* rec congruence *)
+    exact (natrec_EEq T _ _ _ _ _ _
+             (IHz ρ ρ' Hρ) (IHs ρ ρ' Hρ) (IHn ρ ρ' Hρ)).
+  - (* if congruence *)
+    exact (if_EEq T _ _ _ _ _ _
+             (IHc ρ ρ' Hρ) (IHt ρ ρ' Hρ) (IHf ρ ρ' Hρ)).
+  - (* pair congruence *)
+    exact (conj (IHa ρ ρ' Hρ) (IHb ρ ρ' Hρ)).
+  - (* fst congruence *)
+    exact (proj1 (IH ρ ρ' Hρ)).
+  - (* snd congruence *)
+    exact (proj2 (IH ρ ρ' Hρ)).
+  - (* refl *)
+    exact (tmden_EEqE t ρ ρ' Hρ).
+  - (* sym *)
+    exact (EEq_sym _ _ _ (IH ρ' ρ (EEqE_sym _ _ _ Hρ))).
+  - (* trans *)
+    exact (EEq_trans _ _ _ _ (IH1 ρ ρ' Hρ)
+             (IH2 ρ' ρ' (EEqE_refl_r _ _ _ Hρ))).
+Qed.

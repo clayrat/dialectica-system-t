@@ -24,22 +24,21 @@
         for definitional equality by deciding syntactic equality of their
         normal forms.
 
-    Still TODO (PROGRESS.md D2.5, step 2): transfer of Dialectica *validity*
-    across normalization,
+    Dialectica validity is also transferred across normalization:
 
       [valid A (wit d) -> valid A (nf_emb (realizer d))]
 
-    which needs "[tmden] respects [defeq]", stated observationally (per-type
-    logical relation) so that the η-rules do not demand functional
-    extensionality.  It will reuse the substitution fusion lemmas of
-    NbE.Subst.  Together with D2's soundness theorem for [wit], that transfer
-    will show that every HA theorem has a *normal-form* realizer winning its
-    Dialectica game. *)
+    The bridge "[tmden] respects [defeq]" is stated observationally through
+    the per-type relation [EEq], so the η-rules do not demand functional
+    extensionality. Together with D2's soundness theorem for [wit], it shows
+    that every HA theorem has a *normal-form* realizer winning its Dialectica
+    game. Closed instances additionally satisfy syntactic soundness: their
+    matrix programs normalize to [ntrue] against every closed counter. *)
 
 From Stdlib Require Import List.
 Import ListNotations.
 From NbE Require Import Syntax OPE NormalForms Model Subst DefEq Soundness.
-From SystemT Require Import Terms HA Dialectica.
+From SystemT Require Import Terms Eval Semantics HA Dialectica Validity.
 
 Open Scope ty_scope.
 
@@ -52,7 +51,7 @@ Definition realizer {Γ} {A : prp Γ} (d : proof Γ A) : nf Γ (W A) :=
     (immediate from NbE soundness). *)
 Theorem realizer_defeq : forall {Γ} {A : prp Γ} (d : proof Γ A),
   defeq Γ (W A) (nf_emb (realizer d)) (wit d).
-Proof. intros Γ A d. apply soundness. Qed.
+Proof. intros Γ A d. apply NbE.Soundness.soundness. Qed.
 
 (** ** Extracted programs, now in normal form *)
 
@@ -85,3 +84,85 @@ Example realizer_id_forward :
   exists g, realizer (d_id (pEq v0 v0) (Γ := [tN]))
             = npair (nlam (nne (nvar vz))) g.
 Proof. eexists. reflexivity. Qed.
+
+(** ** Validity transfers across normalization
+
+    The payoff of D2 + D2.5: the canonical (βη-normal) realizer of an HA
+    theorem still wins its Dialectica game.  [NbE.Soundness.soundness] says
+    the normal form is definitionally equal to [wit d]; [tmden_defeq] moves
+    that to PER-related denotations; [dia_EEqE] and [Validity.soundness]
+    (Dialectica) close the game. *)
+
+Theorem valid_realizer : forall {Γ} {A : prp Γ} (d : proof Γ A),
+    valid A (nf_emb (realizer d)).
+Proof.
+  intros Γ A d ρ c Hρ Hc.
+  refine (eq_trans (dia_EEqE A ρ ρ
+            (tmden (nf_emb (realizer d)) ρ) (tmden (wit d) ρ) c c Hρ
+            (tmden_defeq _ _ (NbE.Soundness.soundness (wit d)) ρ ρ Hρ) Hc) _).
+  exact (Validity.soundness d ρ c Hρ Hc).
+Qed.
+
+Example realizer_succ_valid : valid _ (nf_emb (realizer ex_succ)) :=
+  valid_realizer ex_succ.
+
+(** ** Syntactic soundness (D2.5, step 5)
+
+    For closed instances the Dialectica game can be stated *inside the object
+    language*: the matrix term itself normalizes to the literal [ntrue].
+    Note there is no side condition on the counter — any closed syntactic
+    counter is a legitimate move (definable values are extensional, by the
+    fundamental lemma).
+
+    Ingredients: canonicity at [tBool] — a closed boolean normal form is
+    [ntrue] or [nfalse] (there are no closed neutrals) — and the semantic
+    soundness theorem transported along [tmden_defeq]. *)
+
+Lemma ne_closed_empty : forall T, ne [] T -> False.
+Proof.
+  assert (H : forall Γ T, ne Γ T -> Γ = [] -> False).
+  { intros Γ T u; induction u as
+      [ Γ T x
+      | Γ S T u IH v
+      | Γ T z s u IH
+      | Γ T vt vf u IH
+      | Γ S T u IH
+      | Γ S T u IH ].
+    - intros HΓ; subst Γ; inversion x.
+    - exact IH.
+    - exact IH.
+    - exact IH.
+    - exact IH.
+    - exact IH. }
+  intros T u; exact (H [] T u eq_refl).
+Qed.
+
+Lemma nf_closed_bool : forall (n : nf [] tBool), n = ntrue \/ n = nfalse.
+Proof.
+  intros n.
+  refine (nf_bool_ind (fun Γ n0 => Γ = [] -> n0 = ntrue \/ n0 = nfalse)
+            _ _ _ [] n eq_refl).
+  - intros; left; reflexivity.
+  - intros; right; reflexivity.
+  - intros Γ u HΓ; subst Γ; destruct (ne_closed_empty _ u).
+Qed.
+
+Theorem soundness_syntactic : forall (A : prp []) (d : proof [] A)
+    (c : tm [] (C A)),
+    norm (diaT A · wit d · c) = ntrue.
+Proof.
+  intros A d c.
+  assert (Hsem : tmden (nf_emb (norm (diaT A · wit d · c))) tt = true).
+  { refine (eq_trans (tmden_defeq _ _
+              (NbE.Soundness.soundness (diaT A · wit d · c)) tt tt I) _).
+    exact (soundness d tt (tmden c tt) I (tmden_EEqE c tt tt I)). }
+  destruct (nf_closed_bool (norm (diaT A · wit d · c))) as [H | H].
+  - exact H.
+  - exfalso; rewrite H in Hsem; discriminate Hsem.
+Qed.
+
+(** Instance: the matrix of [⊢ ∃y. y = 2] at its extracted witness
+    normalizes to [ntrue], as a corollary rather than by brute computation. *)
+Example syn_ex_two : norm (diaT (pEx (pEq v0 (numeral 2))) · wit ex_two · tunit)
+                     = ntrue :=
+  soundness_syntactic _ ex_two tunit.
