@@ -22,9 +22,9 @@
      binders (the function-space reading of NbE's Subst.v), instead of the
      extracted first-order encodings threading context arguments.
 
-   The NbE core (value / eval / reify / reflect / norm and the printer) is
-   copied from nbe-system-t/reference/nbe_native.ml; see its header and
-   extraction/DESIGN.md there for why [value] is one variant with
+   The NbE core (syntax / value / eval / reify / reflect / norm and the
+   printer) is loaded from nbe-system-t/reference/nbe_native.ml; see its
+   header and extraction/DESIGN.md there for why [value] is one variant with
    [assert false] arms, and for the trust boundary (input well-typedness is
    assumed, not checked — wrong input gives wrong output or a crash).
 
@@ -34,177 +34,29 @@
 
    Run it:  ocaml reference/dialectica_native.ml *)
 
-(* ===== System T syntax ===== *)
-
-type ty = TN | TUnit | TBool | Tarr of ty * ty | Tprod of ty * ty
-type var = Vz | Vs of var
-
-type tm =
-  | Tzero
-  | Tsuc of tm
-  | Trec of ty * tm * tm * tm      (* motive type, z, s, scrutinee *)
-  | Tunit
-  | Ttrue
-  | Tfalse
-  | Tif of ty * tm * tm * tm       (* result type, condition, branches *)
-  | Tvar of ty * var
-  | Tlam of tm
-  | Tapp of tm * tm
-  | Tpair of tm * tm
-  | Tfst of tm
-  | Tsnd of tm
+(* Load the submodule's hand-written System T implementation as a module.
+   [#mod_use] keeps this reference file directly runnable by the OCaml
+   interpreter without introducing a separate build step. *)
+#mod_use "nbe-system-t/reference/nbe_native.ml";;
+open Nbe_native
 
 (* Application as a left-associative infix, mirroring the Rocq notation [·]. *)
 let ( $. ) u v = Tapp (u, v)
 
 (* Typed de Bruijn references (the annotation is the variable's type). *)
-let v0 t = Tvar (t, Vz)
-let v1 t = Tvar (t, Vs Vz)
-let v2 t = Tvar (t, Vs (Vs Vz))
-let v3 t = Tvar (t, Vs (Vs (Vs Vz)))
-let v4 t = Tvar (t, Vs (Vs (Vs (Vs Vz))))
-
-(* ===== NbE core (copied from nbe-system-t/reference/nbe_native.ml) ===== *)
-
-type ope = Ope_nil | Ope_drop of ope | Ope_keep of ope
-type ctx = int
-
-let rec ope_id (g : ctx) : ope =
-  if g <= 0 then Ope_nil else Ope_keep (ope_id (g - 1))
-
-let wk (g : ctx) : ope = Ope_drop (ope_id g)
-
-let rec ope_comp (o1 : ope) (o2 : ope) : ope =
-  match o1, o2 with
-  | Ope_nil, o2 -> o2
-  | Ope_drop o1', o2 -> Ope_drop (ope_comp o1' o2)
-  | Ope_keep o1', Ope_drop o2' -> Ope_drop (ope_comp o1' o2')
-  | Ope_keep o1', Ope_keep o2' -> Ope_keep (ope_comp o1' o2')
-  | Ope_keep _, Ope_nil -> assert false   (* Coq: ruled out by the OPE indices *)
-
-let rec var_ren (o : ope) (x : var) : var =
-  match o, x with
-  | Ope_nil, x -> x
-  | Ope_drop o', x -> Vs (var_ren o' x)
-  | Ope_keep _, Vz -> Vz
-  | Ope_keep o', Vs y -> Vs (var_ren o' y)
-
-type nf =
-  | Nzero | Nsuc of nf | Nunit | Ntrue | Nfalse
-  | Nne of ne | Nlam of nf | Npair of nf * nf
-and ne = Nvar of var | Napp of ne * nf | Nrec of nf * nf * ne
-       | Nif of nf * nf * ne | Nfst of ne | Nsnd of ne
-
-let rec nf_ren (o : ope) : nf -> nf = function
-  | Nzero -> Nzero
-  | Nsuc v -> Nsuc (nf_ren o v)
-  | Nunit -> Nunit
-  | Ntrue -> Ntrue
-  | Nfalse -> Nfalse
-  | Nne u -> Nne (ne_ren o u)
-  | Nlam v -> Nlam (nf_ren (Ope_keep o) v)
-  | Npair (v1, v2) -> Npair (nf_ren o v1, nf_ren o v2)
-and ne_ren (o : ope) : ne -> ne = function
-  | Nvar x -> Nvar (var_ren o x)
-  | Napp (u, v) -> Napp (ne_ren o u, nf_ren o v)
-  | Nrec (z, s, u) -> Nrec (nf_ren o z, nf_ren o s, ne_ren o u)
-  | Nif (t, f, u) -> Nif (nf_ren o t, nf_ren o f, ne_ren o u)
-  | Nfst u -> Nfst (ne_ren o u)
-  | Nsnd u -> Nsnd (ne_ren o u)
-
-type value =
-  | VBase of nf
-  | VFun of (ctx -> ope -> value -> value)   (* Kripke: forall Δ, ope Δ Γ -> … *)
-  | VPair of value * value
-
-let rec sem_ren (o : ope) : value -> value = function
-  | VBase n -> VBase (nf_ren o n)
-  | VFun f -> VFun (fun d o' a -> f d (ope_comp o' o) a)
-  | VPair (a, b) -> VPair (sem_ren o a, sem_ren o b)
-
-let rec reflect (t : ty) (u : ne) : value =
-  match t with
-  | TN | TUnit | TBool -> VBase (Nne u)
-  | Tarr (a, b) ->
-    VFun (fun _d o arg -> reflect b (Napp (ne_ren o u, reify a _d arg)))
-  | Tprod (a, b) -> VPair (reflect a (Nfst u), reflect b (Nsnd u))
-
-and reify (t : ty) (g : ctx) (v : value) : nf =
-  match t, v with
-  | (TN | TUnit | TBool), VBase n -> n
-  | Tarr (a, b), VFun f ->
-    Nlam (reify b (g + 1) (f (g + 1) (wk g) (reflect a (Nvar Vz))))
-  | Tprod (a, b), VPair (x, y) -> Npair (reify a g x, reify b g y)
-  | _ -> assert false          (* Coq: value shape matches type by construction *)
-
-type env = ty -> var -> value
-
-let env_ren (o : ope) (env : env) : env =
-  fun t x -> sem_ren o (env t x)
-
-let env_ext (env : env) (a : value) : env =
-  fun t x -> match x with Vz -> a | Vs y -> env t y
-
-let rec semrec (t : ty) (g : ctx) (z : value) (s : value) (n : nf) : value =
-  match n with
-  | Nzero -> z
-  | Nsuc n' ->
-    (match s with
-     | VFun f ->
-       (match f g (ope_id g) (VBase n') with
-        | VFun step -> step g (ope_id g) (semrec t g z s n')
-        | _ -> assert false)
-     | _ -> assert false)
-  | Nne u ->
-    reflect t (Nrec (reify t g z, reify (Tarr (TN, Tarr (t, t))) g s, u))
-  | Nunit | Ntrue | Nfalse | Nlam _ | Npair _ -> assert false
-
-let semif (t : ty) (g : ctx) (c : nf) (vt : value) (vf : value) : value =
-  match c with
-  | Ntrue -> vt
-  | Nfalse -> vf
-  | Nne u -> reflect t (Nif (reify t g vt, reify t g vf, u))
-  | Nzero | Nsuc _ | Nunit | Nlam _ | Npair _ -> assert false
-
-let rec eval (g : ctx) (env : env) (t : tm) : value =
-  match t with
-  | Tzero -> VBase Nzero
-  | Tsuc t' -> (match eval g env t' with VBase n -> VBase (Nsuc n) | _ -> assert false)
-  | Trec (ty, z, s, n) ->
-    (match eval g env n with
-     | VBase nn -> semrec ty g (eval g env z) (eval g env s) nn
-     | _ -> assert false)
-  | Tunit -> VBase Nunit
-  | Ttrue -> VBase Ntrue
-  | Tfalse -> VBase Nfalse
-  | Tif (ty, c, t, f) ->
-    (match eval g env c with
-     | VBase b -> semif ty g b (eval g env t) (eval g env f)
-     | _ -> assert false)
-  | Tvar (ty, x) -> env ty x
-  | Tlam t' -> VFun (fun d o arg -> eval d (env_ext (env_ren o env) arg) t')
-  | Tapp (r, u) ->
-    (match eval g env r with
-     | VFun f -> f g (ope_id g) (eval g env u)
-     | _ -> assert false)
-  | Tpair (a, b) -> VPair (eval g env a, eval g env b)
-  | Tfst t' ->
-    (match eval g env t' with VPair (x, _) -> x | _ -> assert false)
-  | Tsnd t' ->
-    (match eval g env t' with VPair (_, y) -> y | _ -> assert false)
-
-let env_id : env = fun t x -> reflect t (Nvar x)
-
-let norm (g : ctx) (t : ty) (tm : tm) : nf = reify t g (eval g env_id tm)
+let v0 t = Tvar (t, 0)
+let v1 t = Tvar (t, 1)
+let v2 t = Tvar (t, 2)
+let v3 t = Tvar (t, 3)
+let v4 t = Tvar (t, 4)
 
 (* ===== Renaming and substitution (Terms.v / NbE's Subst.v, as functions) === *)
 
 type ren = var -> var
 type sub = ty -> var -> tm
 
-let ren_lift (r : ren) : ren = function
-  | Vz -> Vz
-  | Vs x -> Vs (r x)
+let ren_lift (r : ren) (x : var) : var =
+  if x = 0 then 0 else 1 + r (x - 1)
 
 let rec tm_ren (r : ren) : tm -> tm = function
   | Tzero -> Tzero
@@ -221,12 +73,11 @@ let rec tm_ren (r : ren) : tm -> tm = function
   | Tfst t -> Tfst (tm_ren r t)
   | Tsnd t -> Tsnd (tm_ren r t)
 
-let wk1 t = tm_ren (fun x -> Vs x) t
+let wk1 t = tm_ren (( + ) 1) t
 let wk2 t = wk1 (wk1 t)
 
-let sub_lift (s : sub) : sub = fun t -> function
-  | Vz -> Tvar (t, Vz)
-  | Vs x -> wk1 (s t x)
+let sub_lift (s : sub) : sub = fun t x ->
+  if x = 0 then Tvar (t, 0) else wk1 (s t (x - 1))
 
 let rec tm_sub (s : sub) : tm -> tm = function
   | Tzero -> Tzero
@@ -243,20 +94,18 @@ let rec tm_sub (s : sub) : tm -> tm = function
   | Tfst t -> Tfst (tm_sub s t)
   | Tsnd t -> Tsnd (tm_sub s t)
 
-let rec vs_add d x = if d <= 0 then x else Vs (vs_add (d - 1) x)
+let vs_add d x = max 0 d + x
 
 (* Substitute [n] for the head variable, sending the remaining variables [d]
    binders deeper — Terms.v's [sub_at0] ([sub1] is the [d = 0] instance). *)
-let sub_at0 (d : int) (n : tm) : sub = fun t -> function
-  | Vz -> n
-  | Vs x -> Tvar (t, vs_add d x)
+let sub_at0 (d : int) (n : tm) : sub = fun t x ->
+  if x = 0 then n else Tvar (t, vs_add d (x - 1))
 
 let sub1 (n : tm) : sub = sub_at0 0 n
 
 (* The head-successor substitution [x0 ↦ S x0] behind [psucc]. *)
-let sub_succ : sub = fun t -> function
-  | Vz -> Tsuc (Tvar (TN, Vz))
-  | Vs x -> Tvar (t, Vs x)
+let sub_succ : sub = fun t x ->
+  if x = 0 then Tsuc (Tvar (TN, 0)) else Tvar (t, x)
 
 (* ===== The System T kit (Terms.v) ===== *)
 
@@ -317,7 +166,7 @@ let rec prp_sub (s : sub) : prp -> prp = function
   | PAll a -> PAll (prp_sub (sub_lift s) a)
   | PEx a -> PEx (prp_sub (sub_lift s) a)
 
-let pwk a = prp_ren (fun x -> Vs x) a
+let pwk a = prp_ren (( + ) 1) a
 let psub1 a t = prp_sub (sub1 t) a
 let psucc a = prp_sub sub_succ a
 
@@ -327,16 +176,15 @@ let pnot a = PImp (a, p_false)
 let eqb t s = teqb $. t $. s
 let peq t s = PAtom (eqb t s)
 
-(* Derivations. Each constructor keeps exactly the informative fields of its
-   Rocq counterpart — the context index is erased, and so is the Prop content
-   ([Ax_conv]'s defeq evidence, [Ax_markov]/[Ax_ip]'s wtriv/ctriv side
-   conditions), which extraction already dropped.  Nothing here checks that a
-   [proof] value is well-formed: like term well-typedness, derivation
-   well-formedness is trusted input. *)
+(* Derivations. Each constructor keeps only the fields consumed by witness
+   extraction. Contexts, formula labels recoverable only from the typing
+   judgment, terms attached to computationally trivial axioms, and Prop
+   content are erased. Nothing here checks that a [proof] value is well-formed:
+   like term well-typedness, derivation well-formedness is trusted input. *)
 type proof =
   | Ax_true
-  | Ax_mp of prp * prp * proof * proof              (* P, Q ⊢ P⊃Q, P => Q *)
-  | Ax_chain of prp * prp * prp * proof * proof     (* P, Q, R *)
+  | Ax_mp of proof * proof                          (* ⊢ P⊃Q, P => Q *)
+  | Ax_chain of prp * prp * proof * proof           (* P, R; Q is erased *)
   | Ax_or_contr of prp                              (* P∨P ⊃ P *)
   | Ax_and_contr of prp                             (* P ⊃ P∧P *)
   | Ax_or_inl of prp * prp                          (* P ⊃ P∨Q *)
@@ -351,38 +199,35 @@ type proof =
   | Ax_all_elim of prp * tm                         (* ∀Q ⊃ Q[t] *)
   | Ax_ex_intro of prp * tm                         (* Q[t] ⊃ ∃Q *)
   | Ax_ex_elim of prp * prp * proof                 (* P, Q ⊢ Q ⊃ pwk P => ∃Q ⊃ P *)
-  | Ax_eq_refl of tm                                (* t = t *)
-  | Ax_leibniz of prp * tm * tm                     (* t = s ⊃ Q[t] ⊃ Q[s] *)
-  | Ax_succ_nonzero of tm                           (* ¬(S t = 0) *)
-  | Ax_succ_inj of tm * tm                          (* S t = S s ⊃ t = s *)
+  | Ax_eq_refl                                      (* t = t *)
+  | Ax_leibniz of prp                               (* t = s ⊃ Q[t] ⊃ Q[s] *)
+  | Ax_succ_nonzero                                 (* ¬(S t = 0) *)
+  | Ax_succ_inj                                     (* S t = S s ⊃ t = s *)
   | Ax_ind of prp                                   (* Q[0] ∧ ∀(Q ⊃ Q[S]) ⊃ ∀Q *)
-  | Ax_conv of tm * tm * proof                      (* b, b' defeq: atom conversion *)
+  | Ax_conv of proof                                (* atom conversion *)
   | Ax_markov of prp                                (* ¬∀¬P ⊃ ∃P *)
   | Ax_ip of prp * prp                              (* (∀P ⊃ ∃Q) ⊃ ∃(pwk(∀P) ⊃ Q) *)
 
 (* Derived rules (the ones the examples use). *)
-let d_id p = Ax_chain (p, PAnd (p, p), p, Ax_and_contr p, Ax_and_eliml (p, p))
+let d_id p = Ax_chain (p, p, Ax_and_contr p, Ax_and_eliml (p, p))
 let d_K p q = Ax_cur (p, q, p, Ax_and_eliml (p, q))
 
 let d_swap p q r u =
   Ax_cur (q, p, r,
-          Ax_chain (PAnd (q, p), PAnd (p, q), r,
+          Ax_chain (PAnd (q, p), r,
                     Ax_and_comm (q, p), Ax_uncur (p, q, r, u)))
 
 let d_dni p q a =
-  Ax_mp (p, PImp (PImp (p, q), q),
-         d_swap (PImp (p, q)) p q (d_id (PImp (p, q))), a)
+  Ax_mp (d_swap (PImp (p, q)) p q (d_id (PImp (p, q))), a)
 
 let d_and_intro p q = Ax_cur (p, q, PAnd (p, q), d_id (PAnd (p, q)))
 
 let d_pair p q a b =
-  Ax_mp (q, PAnd (p, q),
-         Ax_mp (p, PImp (q, PAnd (p, q)), d_and_intro p q, a), b)
+  Ax_mp (Ax_mp (d_and_intro p q, a), b)
 
 let d_gen q u =
-  Ax_mp (p_true, PAll q,
-         Ax_all_intro (p_true, q,
-           Ax_mp (q, PImp (pwk p_true, q), d_K q (pwk p_true), u)),
+  Ax_mp (Ax_all_intro (p_true, q,
+           Ax_mp (d_K q (pwk p_true), u)),
          Ax_true)
 
 (* ===== The Dialectica translation (Dialectica.v) ===== *)
@@ -440,7 +285,7 @@ let rec dia_t (a : prp) : tm =
 
 let r_mp u a = Tfst u $. a
 
-let r_chain p _q r u v =
+let r_chain p r u v =
   Tpair (Tlam (Tfst (wk1 v) $. (Tfst (wk1 u) $. v0 (w_ty p))),
          Tlam (Tlam (Tsnd (wk2 u) $. v1 (w_ty p)
            $. (Tsnd (wk2 v) $. (Tfst (wk2 u) $. v1 (w_ty p)) $. v0 (c_ty r)))))
@@ -479,8 +324,8 @@ let r_and_comm p q =
   Tpair (Tlam (Tpair (Tsnd (v0 w_and), Tfst (v0 w_and))),
          Tlam (Tlam (Tpair (Tsnd (v0 c_and'), Tfst (v0 c_and')))))
 
-let r_or_distr p _q r u =
-  let w_rp = w_ty (POr (r, p)) and c_rq = c_ty (POr (r, _q)) in
+let r_or_distr p q r u =
+  let w_rp = w_ty (POr (r, p)) and c_rq = c_ty (POr (r, q)) in
   Tpair (Tlam (Tpair (Tfst (v0 w_rp),
                       Tpair (Tfst (Tsnd (v0 w_rp)),
                              Tfst (wk1 u) $. Tsnd (Tsnd (v0 w_rp))))),
@@ -617,8 +462,8 @@ let r_ip p q =
 (* The proof translation: dispatch each rule to its combinator. *)
 let rec wit : proof -> tm = function
   | Ax_true -> Tunit
-  | Ax_mp (_, _, u, a) -> r_mp (wit u) (wit a)
-  | Ax_chain (p, q, r, u, v) -> r_chain p q r (wit u) (wit v)
+  | Ax_mp (u, a) -> r_mp (wit u) (wit a)
+  | Ax_chain (p, r, u, v) -> r_chain p r (wit u) (wit v)
   | Ax_or_contr p -> r_or_contr p
   | Ax_and_contr p -> r_and_contr p
   | Ax_or_inl (p, q) -> r_or_inl p q
@@ -633,12 +478,12 @@ let rec wit : proof -> tm = function
   | Ax_all_elim (q, t) -> r_all_elim q t
   | Ax_ex_intro (q, t) -> r_ex_intro q t
   | Ax_ex_elim (p, q, u) -> r_ex_elim p q (wit u)
-  | Ax_eq_refl _ -> Tunit
-  | Ax_leibniz (q, _, _) -> r_leibniz q
-  | Ax_succ_nonzero _ -> r_atom_imp
-  | Ax_succ_inj _ -> r_atom_imp
+  | Ax_eq_refl -> Tunit
+  | Ax_leibniz q -> r_leibniz q
+  | Ax_succ_nonzero -> r_atom_imp
+  | Ax_succ_inj -> r_atom_imp
   | Ax_ind q -> r_ind q
-  | Ax_conv (_, _, d) -> wit d
+  | Ax_conv d -> wit d
   | Ax_markov p -> r_markov p
   | Ax_ip (p, q) -> r_ip p q
 
@@ -652,27 +497,23 @@ let x1 = v1 TN
 (* ⊢ ∃y. y = 2, by ∃-introduction at 2. *)
 let q_two = peq x0 (numeral 2)
 let ex_two =
-  Ax_mp (psub1 q_two (numeral 2), PEx q_two,
-         Ax_ex_intro (q_two, numeral 2),
-         Ax_eq_refl (numeral 2))
+  Ax_mp (Ax_ex_intro (q_two, numeral 2), Ax_eq_refl)
 
 (* ⊢ ∀x ∃y. y = S x — the realizer is the successor program. *)
 let q_succ = peq x0 (Tsuc x1)
 let ex_succ =
   d_gen (PEx q_succ)
-    (Ax_mp (psub1 q_succ (Tsuc x0), PEx q_succ,
-            Ax_ex_intro (q_succ, Tsuc x0),
-            Ax_eq_refl (Tsuc x0)))
+    (Ax_mp (Ax_ex_intro (q_succ, Tsuc x0), Ax_eq_refl))
 
 (* ⊢ ∃y. y = 0 the non-constructive way: refute ∀y.¬(y = 0) at 0, then
    conclude by Markov's principle.  Normalization still finds the witness. *)
 let p_mp = peq x0 Tzero
 let mp_notallnot =
-  Ax_chain (PAll (pnot p_mp), psub1 (pnot p_mp) Tzero, p_false,
+  Ax_chain (PAll (pnot p_mp), p_false,
             Ax_all_elim (pnot p_mp, Tzero),
-            d_dni (peq Tzero Tzero) p_false (Ax_eq_refl Tzero))
+            d_dni (peq Tzero Tzero) p_false Ax_eq_refl)
 let mp_ex =
-  Ax_mp (pnot (PAll (pnot p_mp)), PEx p_mp, Ax_markov p_mp, mp_notallnot)
+  Ax_mp (Ax_markov p_mp, mp_notallnot)
 
 (* ⊢ ∀x. x + 0 = x by induction (plus recurses on its first argument).
    Base and the step's computation fact are reflexivity instances converted
@@ -684,51 +525,21 @@ let q_step = peq (plus (Tsuc x1) Tzero) (Tsuc x0)
 let t_plus0 = plus x0 Tzero
 
 let plus0_base =
-  Ax_conv (eqb Tzero Tzero, eqb (plus Tzero Tzero) Tzero,
-           Ax_eq_refl Tzero)
+  Ax_conv Ax_eq_refl
 
 let plus0_step =
   d_gen (PImp (p_plus0, psucc p_plus0))
-    (Ax_mp (psub1 q_step t_plus0, PImp (peq t_plus0 x0, psub1 q_step x0),
-            d_swap (peq t_plus0 x0) (psub1 q_step t_plus0) (psub1 q_step x0)
-                   (Ax_leibniz (q_step, t_plus0, x0)),
-            Ax_conv (eqb (Tsuc t_plus0) (Tsuc t_plus0),
-                     eqb (plus (Tsuc x0) Tzero) (Tsuc t_plus0),
-                     Ax_eq_refl (Tsuc t_plus0))))
+    (Ax_mp
+       (d_swap (peq t_plus0 x0) (psub1 q_step t_plus0) (psub1 q_step x0)
+          (Ax_leibniz q_step),
+        Ax_conv Ax_eq_refl))
 
 let plus0 =
   let base_f = psub1 p_plus0 Tzero in
   let step_f = PAll (PImp (p_plus0, psucc p_plus0)) in
-  Ax_mp (PAnd (base_f, step_f), PAll p_plus0,
-         Ax_ind p_plus0,
-         d_pair base_f step_f plus0_base plus0_step)
+  Ax_mp (Ax_ind p_plus0, d_pair base_f step_f plus0_base plus0_step)
 
-(* ===== Pretty-printer (from nbe_native.ml) and driver ===== *)
-
-let rec var_idx = function Vz -> 0 | Vs y -> 1 + var_idx y
-let rec pp_nf n =
-  let rec count k = function Nsuc v -> count (k + 1) v | b -> (k, b) in
-  match n with
-  | Nzero -> "0"
-  | Nsuc _ ->
-    let k, b = count 0 n in
-    (match b with
-     | Nzero -> string_of_int k
-     | Nne u -> Printf.sprintf "%d + %s" k (pp_ne u)
-     | other -> Printf.sprintf "%d + %s" k (pp_nf other))
-  | Nunit -> "tt"
-  | Ntrue -> "true"
-  | Nfalse -> "false"
-  | Nne u -> pp_ne u
-  | Nlam v -> "\206\187. " ^ pp_nf v
-  | Npair (v1, v2) -> "(" ^ pp_nf v1 ^ ", " ^ pp_nf v2 ^ ")"
-and pp_ne = function
-  | Nvar x -> "#" ^ string_of_int (var_idx x)
-  | Napp (u, v) -> "(" ^ pp_ne u ^ " " ^ pp_nf v ^ ")"
-  | Nrec (z, s, u) -> Printf.sprintf "rec(%s, %s, %s)" (pp_nf z) (pp_nf s) (pp_ne u)
-  | Nif (t, f, u) -> Printf.sprintf "if %s then %s else %s" (pp_ne u) (pp_nf t) (pp_nf f)
-  | Nfst u -> "fst " ^ pp_ne u
-  | Nsnd u -> "snd " ^ pp_ne u
+(* ===== Driver (using the pretty-printer from nbe_native.ml) ===== *)
 
 let () =
   (* Realizers, asserted against the Rocq-side normal forms
@@ -743,12 +554,12 @@ let () =
           = Npair (Nsuc (Nsuc Nzero), Nunit));
   assert (show "|- \xe2\x88\x80x \xe2\x88\x83y. y = S x" (PAll (PEx q_succ)) ex_succ
             "\xce\xbb. (1 + #0, tt)"
-          = Nlam (Npair (Nsuc (Nne (Nvar Vz)), Nunit)));
+          = Nlam (Npair (Nsuc (Nne (Nvar 0)), Nunit)));
   assert (show "|- \xe2\x88\x83y. y = 0  [Markov]" (PEx p_mp) mp_ex "(0, tt)"
           = Npair (Nzero, Nunit));
   assert (show "|- \xe2\x88\x80x. x + 0 = x  [ind]" (PAll p_plus0) plus0
             "\xce\xbb. rec(tt, ..., #0)"
-          = Nlam (Nne (Nrec (Nunit, Nlam (Nlam Nunit), Nvar Vz))));
+          = Nlam (Nne (Nrec (Nunit, Nlam (Nlam Nunit), Nvar 0))));
   (* Closed Dialectica games: matrix · witness · counter must normalize to
      true (the syn_* instances of soundness_syntactic). *)
   print_endline "\nClosed games (matrix \xc2\xb7 witness \xc2\xb7 counter):\n";
