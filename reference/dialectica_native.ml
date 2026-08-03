@@ -281,117 +281,236 @@ let rec dia_t (a : prp) : tm =
    Dialectica.v).  A witness of an implication is a pair (forward map on
    witnesses, backward map on counters); [Tlam] is unannotated, so the formula
    arguments are only consumed for variable annotations and the
-   [tdefault]/[dia_t] calls. ----- *)
+   [tdefault]/[dia_t] calls.
 
+   The comments print each term schematically: [⟨a,b⟩] is pairing, [π₁]/[π₂]
+   are projections, [d_A] is [tdefault (w_ty A)] or [tdefault (c_ty A)] as
+   dictated by the position, [|P| w c] is [dia_t P · w · c], and [u[n]]
+   means capture-avoiding substitution of [n] for [u]'s free number variable.
+   Formula subscripts on variables indicate their witness/counter type. ----- *)
+
+(* Term: [π₁ u a].
+   Modus ponens only needs the forward component of the implication witness
+   [u]; applying it to the witness [a] for the premise produces the result. *)
 let r_mp u a = Tfst u $. a
 
+(* Term: [⟨λx. π₁ v (π₁ u x),
+            λx z. π₂ u x (π₂ v (π₁ u x) z)⟩].
+   This composes [u : P → Q] and [v : Q → R]. Witnesses flow forward
+   through both maps; an [R]-counter flows backward through [v] and then [u]. *)
 let r_chain p r u v =
   Tpair (Tlam (Tfst (wk1 v) $. (Tfst (wk1 u) $. v0 (w_ty p))),
          Tlam (Tlam (Tsnd (wk2 u) $. v1 (w_ty p)
            $. (Tsnd (wk2 v) $. (Tfst (wk2 u) $. v1 (w_ty p)) $. v0 (c_ty r)))))
 
+(* Term: [⟨λ(b,⟨x₁,x₂⟩). if b then x₁ else x₂,
+            λ_ c. ⟨c,c⟩⟩].
+   A witness of [P ∨ P] selects one of two [P]-witnesses. Conversely, the
+   same [P]-counter can challenge either disjunct, so it is duplicated. *)
 let r_or_contr p =
-  let w_or = w_ty (POr (p, p)) in
-  Tpair (Tlam (Tif (w_ty p, Tfst (v0 w_or),
-                    Tfst (Tsnd (v0 w_or)), Tsnd (Tsnd (v0 w_or)))),
-         Tlam (Tlam (Tpair (v0 (c_ty p), v0 (c_ty p)))))
+  let w = v0 (w_ty (POr (p, p))) in
+  let c = v0 (c_ty p) in
+  Tpair (Tlam (Tif (w_ty p, Tfst w,
+                    Tfst (Tsnd w), Tsnd (Tsnd w))),
+         Tlam (Tlam (Tpair (c, c))))
 
+(* Term: [⟨λx. ⟨x,x⟩,
+            λx ⟨c₁,c₂⟩. if |P| x c₁ then c₂ else c₁⟩].
+
+   The forward half duplicates the single witness, as expected for
+   [P → P ∧ P]. The backward half cannot simply choose [c₁] or [c₂]: to
+   establish both conjuncts from one assumed instance of [|P|], it must choose
+   a counter whose truth controls the other one. It first evaluates
+   [|P| x c₁]. If that is false, it returns [c₁], making the antecedent of
+   the interpreted implication false and the implication immediate. If it is
+   true, it returns [c₂]; truth of the antecedent then supplies
+   [|P| x c₂], while the test has already established [|P| x c₁]. Thus a
+   true antecedent always entails both components of [|P ∧ P|]. *)
 let r_and_contr p =
-  let c_and = c_ty (PAnd (p, p)) in
-  Tpair (Tlam (Tpair (v0 (w_ty p), v0 (w_ty p))),
+  let x = v0 (w_ty p) in
+  let c = v0 (c_ty (PAnd (p, p))) in
+  Tpair (Tlam (Tpair (x, x)),
          Tlam (Tlam (Tif (c_ty p,
-                          wk2 (dia_t p) $. v1 (w_ty p) $. Tfst (v0 c_and),
-                          Tsnd (v0 c_and), Tfst (v0 c_and)))))
+                          wk2 (dia_t p) $. v1 (w_ty p) $. Tfst c,
+                          Tsnd c, Tfst c))))
 
+(* Term: [⟨λx. ⟨true,⟨x,d_Q⟩⟩, λ_ ⟨c_P,c_Q⟩. c_P⟩].
+   The Boolean selects the left disjunct, whose witness is [x]; the unused
+   right witness is filled by a default. Only the left counter can matter. *)
 let r_or_inl p q =
-  let c_or = c_ty (POr (p, q)) in
   Tpair (Tlam (Tpair (Ttrue, Tpair (v0 (w_ty p), tdefault (w_ty q)))),
-         Tlam (Tlam (Tfst (v0 c_or))))
+         Tlam (Tlam (Tfst (v0 (c_ty (POr (p, q)))))))
 
+(* Term: [⟨λ⟨x,y⟩. x, λ_ c. ⟨c,d_Q⟩⟩].
+   Projection supplies the [P]-witness. A challenge to [P] is embedded as the
+   left challenge to [P ∧ Q], with an arbitrary counter for the discarded [Q]. *)
 let r_and_eliml p q =
-  let w_and = w_ty (PAnd (p, q)) in
-  Tpair (Tlam (Tfst (v0 w_and)),
+  Tpair (Tlam (Tfst (v0 (w_ty (PAnd (p, q))))),
          Tlam (Tlam (Tpair (v0 (c_ty p), tdefault (c_ty q)))))
 
+(* Term: [⟨λ⟨b,⟨x,y⟩⟩. ⟨¬b,⟨y,x⟩⟩,
+            λ_ ⟨c_Q,c_P⟩. ⟨c_P,c_Q⟩⟩].
+   Commuting a disjunction negates its branch tag and swaps both its witness
+   payload and its pair of counters. *)
 let r_or_comm p q =
-  let w_or = w_ty (POr (p, q)) and c_or' = c_ty (POr (q, p)) in
-  Tpair (Tlam (Tpair (tnegb (Tfst (v0 w_or)),
-                      Tpair (Tsnd (Tsnd (v0 w_or)), Tfst (Tsnd (v0 w_or))))),
-         Tlam (Tlam (Tpair (Tsnd (v0 c_or'), Tfst (v0 c_or')))))
+  let w = v0 (w_ty (POr (p, q))) in
+  let c = v0 (c_ty (POr (q, p))) in
+  Tpair (Tlam (Tpair (tnegb (Tfst w),
+                      Tpair (Tsnd (Tsnd w), Tfst (Tsnd w)))),
+         Tlam (Tlam (Tpair (Tsnd c, Tfst c))))
 
+(* Term: [⟨λ⟨x,y⟩. ⟨y,x⟩, λ_ ⟨c_Q,c_P⟩. ⟨c_P,c_Q⟩⟩].
+   Conjunction is commuted by swapping witnesses in the forward direction and
+   counters in the backward direction. *)
 let r_and_comm p q =
-  let w_and = w_ty (PAnd (p, q)) and c_and' = c_ty (PAnd (q, p)) in
-  Tpair (Tlam (Tpair (Tsnd (v0 w_and), Tfst (v0 w_and))),
-         Tlam (Tlam (Tpair (Tsnd (v0 c_and'), Tfst (v0 c_and')))))
+  let w = v0 (w_ty (PAnd (p, q))) in
+  let c = v0 (c_ty (PAnd (q, p))) in
+  Tpair (Tlam (Tpair (Tsnd w, Tfst w)),
+         Tlam (Tlam (Tpair (Tsnd c, Tfst c))))
 
+(* Term: [⟨λ⟨b,⟨z,x⟩⟩. ⟨b,⟨z,π₁ u x⟩⟩,
+            λ⟨b,⟨z,x⟩⟩ ⟨c_R,c_Q⟩. ⟨c_R,π₂ u x c_Q⟩⟩].
+   The [R] branch is preserved, while the [P] branch is transported through
+   [u : P → Q]. Its counter is correspondingly transported backward. *)
 let r_or_distr p q r u =
-  let w_rp = w_ty (POr (r, p)) and c_rq = c_ty (POr (r, q)) in
-  Tpair (Tlam (Tpair (Tfst (v0 w_rp),
-                      Tpair (Tfst (Tsnd (v0 w_rp)),
-                             Tfst (wk1 u) $. Tsnd (Tsnd (v0 w_rp))))),
-         Tlam (Tlam (Tpair (Tfst (v0 c_rq),
-                            Tsnd (wk2 u) $. Tsnd (Tsnd (v1 w_rp))
-                              $. Tsnd (v0 c_rq)))))
+  let w_rp = w_ty (POr (r, p)) in
+  let w0 = v0 w_rp and w1 = v1 w_rp in
+  let c = v0 (c_ty (POr (r, q))) in
+  Tpair (Tlam (Tpair (Tfst w0,
+                      Tpair (Tfst (Tsnd w0),
+                             Tfst (wk1 u) $. Tsnd (Tsnd w0)))),
+         Tlam (Tlam (Tpair (Tfst c,
+                            Tsnd (wk2 u) $. Tsnd (Tsnd w1) $. Tsnd c))))
 
+(* Term:
+   [⟨λx. ⟨λy. π₁ u ⟨x,y⟩,
+             λy z. π₂(π₂ u ⟨x,y⟩ z)⟩,
+     λx ⟨y,z⟩. π₁(π₂ u ⟨x,y⟩ z)⟩].
+   Currying splits the counter produced by [u : P ∧ Q → R]: its [Q]
+   component becomes the inner implication's backward result, and its [P]
+   component becomes the outer implication's backward result. *)
 let r_cur p q r u =
-  let c_qr = c_ty (PImp (q, r)) in
+  let c = v0 (c_ty (PImp (q, r))) in
   Tpair
     (Tlam (Tpair
        (Tlam (Tfst (wk2 u) $. Tpair (v1 (w_ty p), v0 (w_ty q))),
        Tlam (Tlam (Tsnd (Tsnd (wk1 (wk2 u))
          $. Tpair (v2 (w_ty p), v1 (w_ty q)) $. v0 (c_ty r)))))),
      Tlam (Tlam (Tfst (Tsnd (wk2 u)
-       $. Tpair (v1 (w_ty p), Tfst (v0 c_qr)) $. Tsnd (v0 c_qr)))))
+       $. Tpair (v1 (w_ty p), Tfst c) $. Tsnd c))))
 
+(* Term:
+   [⟨λ⟨x,y⟩. π₁(π₁ u x) y,
+     λ⟨x,y⟩ z. ⟨π₂ u x ⟨y,z⟩, π₂(π₁ u x) y z⟩⟩].
+   Uncurrying feeds the two witnesses to the nested forward maps. The outer
+   and inner backward maps independently produce the [P] and [Q] counters. *)
 let r_uncur p q r u =
   let w_pq = w_ty (PAnd (p, q)) in
+  let w0 = v0 w_pq and w1 = v1 w_pq in
+  let x0 = Tfst w0 and y0 = Tsnd w0 in
+  let x1 = Tfst w1 and y1 = Tsnd w1 in
+  let u2 = wk2 u in
+  let z = v0 (c_ty r) in
   Tpair
-    (Tlam (Tfst (Tfst (wk1 u) $. Tfst (v0 w_pq)) $. Tsnd (v0 w_pq)),
+    (Tlam (Tfst (Tfst (wk1 u) $. x0) $. y0),
      Tlam (Tlam (Tpair
-       (Tsnd (wk2 u) $. Tfst (v1 w_pq)
-          $. Tpair (Tsnd (v1 w_pq), v0 (c_ty r)),
-        Tsnd (Tfst (wk2 u) $. Tfst (v1 w_pq))
-          $. Tsnd (v1 w_pq) $. v0 (c_ty r)))))
+       (Tsnd u2 $. x1 $. Tpair (y1, z),
+        Tsnd (Tfst u2 $. x1) $. y1 $. z))))
 
+(* Term: [⟨λ_. d_P, λ_ _. tt⟩].
+   Falsity has only unit witness/counter data. From it we may return a default
+   witness for any conclusion, and every backward challenge collapses to unit. *)
 let r_exfalso p =
   Tpair (Tlam (tdefault (w_ty p)), Tlam (Tlam Tunit))
 
 (* u :  W (pwk P ⊃ Q)  one tN binder up;  its head variable is instantiated
    under the new λs, the rest pushed past them — [sub_at0], no casts. *)
+(* Term: [⟨λx n. π₁(u[n]) x, λx ⟨n,c⟩. π₂(u[n]) x c⟩].
+   Universal introduction turns the free-number-indexed family [u] into a
+   function of [n]. A counter to the universal supplies the same [n], so the
+   backward half instantiates [u] at that index as well. *)
 let r_all_intro p q u =
-  let c_all = c_ty (PAll q) in
+  let c = v0 (c_ty (PAll q)) in
   Tpair
     (Tlam (Tlam (Tfst (tm_sub (sub_at0 2 (v0 TN)) u) $. v1 (w_ty p))),
-     Tlam (Tlam (Tsnd (tm_sub (sub_at0 2 (Tfst (v0 c_all))) u)
-       $. v1 (w_ty p) $. Tsnd (v0 c_all))))
+     Tlam (Tlam (Tsnd (tm_sub (sub_at0 2 (Tfst c)) u)
+       $. v1 (w_ty p) $. Tsnd c)))
 
+(* Term: [⟨λF. F t, λ_ c. ⟨t,c⟩⟩].
+   Universal elimination evaluates the witness family at [t]. Backward, a
+   counter to [Q(t)] becomes the universal counter consisting of [t] and [c]. *)
 let r_all_elim q t =
-  let w_all = w_ty (PAll q) in
-  Tpair (Tlam (v0 w_all $. wk1 t),
+  Tpair (Tlam (v0 (w_ty (PAll q)) $. wk1 t),
          Tlam (Tlam (Tpair (wk2 t, v0 (c_ty q)))))
 
+(* Term: [⟨λx. ⟨t,x⟩, λ_ c. c⟩].
+   Existential introduction packages [t] with the supplied witness for
+   [Q(t)]; existential counters are already counters for the body. *)
 let r_ex_intro q t =
   Tpair (Tlam (Tpair (wk1 t, v0 (w_ty q))),
          Tlam (Tlam (v0 (c_ty q))))
 
+(* Term: [⟨λ⟨n,x⟩. π₁(u[n]) x,
+            λ⟨n,x⟩ c. π₂(u[n]) x c⟩].
+   The existential witness reveals an index [n] and a witness [x] for [Q(n)].
+   Both halves instantiate the free-number-indexed implication [u] at [n]. *)
 let r_ex_elim p q u =
   let w_ex = w_ty (PEx q) in
+  let w0 = v0 w_ex and w1 = v1 w_ex in
   Tpair
-    (Tlam (Tfst (tm_sub (sub_at0 1 (Tfst (v0 w_ex))) u) $. Tsnd (v0 w_ex)),
-     Tlam (Tlam (Tsnd (tm_sub (sub_at0 2 (Tfst (v1 w_ex))) u)
-       $. Tsnd (v1 w_ex) $. v0 (c_ty p))))
+    (Tlam (Tfst (tm_sub (sub_at0 1 (Tfst w0)) u) $. Tsnd w0),
+     Tlam (Tlam (Tsnd (tm_sub (sub_at0 2 (Tfst w1)) u)
+       $. Tsnd w1 $. v0 (c_ty p))))
 
 (* All atoms have trivial witnesses, so Leibniz is transport — and with the
    casts gone it is literally the identity on both sides. *)
+(* Term: [⟨λ_. ⟨λx. x, λ_ c. c⟩, λ_ _. tt⟩].
+   Equality atoms carry only unit witness data. The induced implication
+   [Q(t) → Q(s)] therefore transports witnesses and counters by identity, while
+   the outer equality challenge is unit. *)
 let r_leibniz q =
   Tpair (Tlam (Tpair (Tlam (v0 (w_ty q)), Tlam (Tlam (v0 (c_ty q))))),
          Tlam (Tlam Tunit))
 
+(* Term: [⟨λ_. tt, λ_ _. tt⟩].
+   Successor injectivity and nonzeroness are implications between atoms, whose
+   witness and counter types are all unit, so no computational data survives. *)
 let r_atom_imp = Tpair (Tlam Tunit, Tlam (Tlam Tunit))
 
-(* Induction: forward is primitive recursion on the step witnesses; backward
-   is Gödel's downward counterexample search, one recursor computing the pair
-   (w_k, g_k) — see the long comment on [r_ind] in Dialectica.v. *)
+(* Term (schematic, for premise witness [p = ⟨w₀,λk.⟨f_k,g_k⟩⟩]):
+
+     [⟨ λp n. rec w₀ (λk w_k. f_k w_k) n,
+        λp ⟨n,c_n⟩. G_n c_n ⟩]
+
+   where one primitive recursion simultaneously builds the current witness
+   and a function selecting a counter to the induction premises:
+
+     [(w₀, G₀)]
+       [G₀ c = ⟨c, ⟨0,⟨d_W,d_C⟩⟩⟩]
+
+     [(w_{k+1}, G_{k+1})]
+       [w_{k+1} = f_k w_k]
+       [c' = g_k w_k c]
+       [G_{k+1} c =
+          if |Q(k)| w_k c'
+          then ⟨d_C,⟨k,⟨w_k,c⟩⟩⟩
+          else G_k c'].
+
+   The forward half is ordinary induction on witnesses: start with the base
+   witness [w₀], then apply the step witness [f_k] at each successor.
+
+   The backward half must turn a failed challenge [⟨n,c_n⟩] to the
+   conclusion [∀n.Q(n)] into a challenge to either the base case or one of
+   the induction steps. At zero, [c] directly challenges the base matrix, so
+   the step-counter component can be filled with defaults. At a successor,
+   [g_k] transports [c] backward to a predecessor counter [c']. If
+   [|Q(k)| w_k c'] is true, the step implication at [k], challenged with
+   [⟨w_k,c⟩], must establish the desired successor matrix; this is the
+   counter returned in the [then] branch. If the predecessor matrix is false,
+   that step implication is already vacuously true and cannot expose the bad
+   premise, so the search continues downward with [G_k c']. The recursion
+   therefore returns a premise counter strong enough that truth of the entire
+   induction premise forces truth of the challenged conclusion. *)
 let r_ind q =
   let wq = w_ty q and cq = c_ty q in
   let w_prem = Tprod (wq, Tarr (TN, Tprod (Tarr (wq, wq),
@@ -399,6 +518,7 @@ let r_ind q =
   let c_prem = Tprod (cq, Tprod (TN, Tprod (wq, cq))) in
   let c_all = Tprod (TN, cq) in
   let motive = Tprod (wq, Tarr (cq, c_prem)) in
+  let dc = tdefault cq in
   let fwd =
     Tlam (Tlam (Trec (wq,
       Tfst (v1 w_prem),
@@ -409,55 +529,73 @@ let r_ind q =
   let z =
     Tpair (Tfst (v1 w_prem),
            Tlam (Tpair (v0 cq,
-                        Tpair (Tzero, Tpair (tdefault wq, tdefault cq)))))
+                        Tpair (Tzero, Tpair (tdefault wq, dc)))))
   in
   (* λk (w_k, g_k). (w_{k+1}, g_{k+1}):  g_{k+1} c tests the matrix at k and
      either blames step k or recurses into g_k. *)
   let s =
     let g_step =
       Tlam (
+        let k = v2 TN in
+        let state = v1 motive in
+        let wk = Tfst state in
         let c = v0 cq in
-        let c' = Tsnd (Tsnd (v4 w_prem) $. v2 TN) $. Tfst (v1 motive) $. c in
+        let c' = Tsnd (Tsnd (v4 w_prem) $. k) $. wk $. c in
         Tif (c_prem,
-             tm_sub (sub_at0 5 (v2 TN)) (dia_t q) $. Tfst (v1 motive) $. c',
-             Tpair (tdefault cq, Tpair (v2 TN, Tpair (Tfst (v1 motive), c))),
-             Tsnd (v1 motive) $. c'))
+             tm_sub (sub_at0 5 k) (dia_t q) $. wk $. c',
+             Tpair (dc, Tpair (k, Tpair (wk, c))),
+             Tsnd state $. c'))
     in
     Tlam (Tlam (Tpair
       (Tfst (Tsnd (v3 w_prem) $. v1 TN) $. Tfst (v0 motive),
        g_step)))
   in
   let bwd =
-    Tlam (Tlam (Tsnd (Trec (motive, z, s, Tfst (v0 c_all)))
-      $. Tsnd (v0 c_all)))
+    let c = v0 c_all in
+    Tlam (Tlam (Tsnd (Trec (motive, z, s, Tfst c)) $. Tsnd c))
   in
   Tpair (fwd, bwd)
 
 (* Markov: the counter-half of the ¬∀¬P witness, fed the canonical family,
    yields the existential index; every other move is a default (the
    wtriv/ctriv side conditions make defaults as good as any move). *)
+(* Term: [⟨λh. ⟨π₁(π₂ h d_{∀¬P} tt),d_P⟩,
+            λ_ _. ⟨d_{∀¬P},tt⟩⟩].
+   The backward component of the double-negation witness supplies a counter
+   to [∀¬P], whose first projection is the existential index. Markov's
+   witness/counter triviality assumptions justify all remaining defaults. *)
 let r_markov p =
   let w_h = w_ty (pnot (PAll (pnot p))) in
   let w_fam = w_ty (PAll (pnot p)) in
+  let d_fam = tdefault w_fam in
   Tpair
     (Tlam (Tpair
-       (Tfst (Tsnd (v0 w_h) $. tdefault w_fam $. Tunit),
+       (Tfst (Tsnd (v0 w_h) $. d_fam $. Tunit),
         tdefault (w_ty p))),
-     Tlam (Tlam (Tpair (tdefault w_fam, Tunit))))
+     Tlam (Tlam (Tpair (d_fam, Tunit))))
 
 (* Independence of Premise: project the premise witness at the canonical
    ∀-family; the Rocq version's one tcast is gone. *)
+(* Term (writing [u = ⟨f,g⟩] and [f d_{∀P} = ⟨n,y⟩]):
+   [⟨λu. ⟨n,⟨λ_. y, λ_ c. g d_{∀P} c⟩⟩,
+     λ_ ⟨_,c⟩. ⟨d_{∀P},c⟩⟩].
+   Applying the premise implication to the canonical universal witness exposes
+   an existential index [n] and [Q]-witness [y]. These form a constant
+   implication from [∀P] to [Q]. Backward challenges reuse the original
+   implication's counter map, with trivial witness positions filled by the
+   canonical default allowed by the side conditions. *)
 let r_ip p q =
   let w_imp = w_ty (PImp (PAll p, PEx q)) in
   let w_all = w_ty (PAll p) in
-  let c_ex = c_ty (PEx (PImp (pwk (PAll p), q))) in
+  let d_all = tdefault w_all in
   Tpair
     (Tlam (Tpair
-       (Tfst (Tfst (v0 w_imp) $. tdefault w_all),
+       (Tfst (Tfst (v0 w_imp) $. d_all),
         Tpair
-          (Tlam (Tsnd (Tfst (v1 w_imp) $. tdefault w_all)),
-           Tlam (Tlam (Tsnd (v2 w_imp) $. tdefault w_all $. v0 (c_ty q)))))),
-     Tlam (Tlam (Tpair (tdefault w_all, Tsnd (v0 c_ex)))))
+          (Tlam (Tsnd (Tfst (v1 w_imp) $. d_all)),
+           Tlam (Tlam (Tsnd (v2 w_imp) $. d_all $. v0 (c_ty q)))))),
+     Tlam (Tlam (Tpair
+       (d_all, Tsnd (v0 (c_ty (PEx (PImp (pwk (PAll p), q)))))))))
 
 (* The proof translation: dispatch each rule to its combinator. *)
 let rec wit : proof -> tm = function
